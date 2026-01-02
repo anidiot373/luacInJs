@@ -1592,5 +1592,7 @@ class LuaVM {
 module.exports = {
 	wrap,
 	unwrap,
+	LuaError,
+	LuaCFormatError,
 	LuaVM
 }
