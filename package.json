@@ -1,0 +1,15 @@
+{
+    "name": "luacinjs",
+    "version": "1.0.0",
+    "description": "An interpreter/emulator for .luac files.",
+    "keywords": [
+        "lua"
+    ],
+    "license": "ISC",
+    "author": "kloodi",
+    "type": "commonjs",
+    "main": "index.js",
+    "scripts": {
+        "test": "luac -o test/test.luac test/test.lua && node test/test.js"
+    }
+}
