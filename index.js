@@ -1,33 +1,49 @@
+function formatPos({ fileName, line }) {
+	return `${fileName}:${line}:`
+}
+
+class LuaError extends Error {
+	constructor(position, message) {
+		super(`${formatPos(position)} ${message}`)
+	}
+}
+
+class LuaCFormatError extends Error {
+	constructor(message) {
+		super(message)
+	}
+}
+
 const errors = {
-	arithmetic: (type) => {
-		throw new Error(`attempt to perform arithmetic on a ${type} value`)
+	arithmetic: (position, type) => {
+		throw new LuaError(position, `attempt to perform arithmetic on a ${type} value`)
 	},
-	concatenate: (type) => {
-		throw new Error(`attempt to concatenate a ${type} value`)
+	concatenate: (position, type) => {
+		throw new LuaError(position, `attempt to concatenate a ${type} value`)
 	},
-	compare: (leftType, rightType) => {
+	compare: (position, leftType, rightType) => {
 		if (leftType === rightType) {
-			throw new Error(`attempt to compare two ${leftType} values`)
+			throw new LuaError(position, `attempt to compare two ${leftType} values`)
 		}
-		throw new Error(`attempt to compare ${leftType} with ${rightType}`)
+		throw new LuaError(position, `attempt to compare ${leftType} with ${rightType}`)
 	},
-	length: (type) => {
-		throw new Error(`attempt to get length of a ${type} value`)
+	length: (position, type) => {
+		throw new LuaError(position, `attempt to get length of a ${type} value`)
 	},
-	forLimit: () => {
-		throw new Error("'for' limit must be a number")
+	forLimit: (position) => {
+		throw new LuaError(position, `'for' limit must be a number`)
 	},
-	forInit: () => {
-		throw new Error("'for' initial value must be a number")
+	forInit: (position) => {
+		throw new LuaError(position, `'for' initial value must be a number`)
 	},
-	forStep: () => {
-		throw new Error("'for' step must be a number")
+	forStep: (position) => {
+		throw new LuaError(position, `'for' step must be a number`)
 	},
-	call: (type) => {
-		throw new Error(`attempt to call a ${type} value`)
+	call: (position, type) => {
+		throw new LuaError(position, `attempt to call a ${type} value`)
 	},
-	badArg: (index, funcName, type, expected) => {
-		throw new Error(`bad argument #${index} to \'${funcName}\' (${expected} expected, got ${type})`)
+	badArgType: (position, index, funcName, type, expected) => {
+		throw new LuaError(position, `bad argument #${index} to \'${funcName}\' (${expected} expected, got ${type})`)
 	}
 }
 
@@ -37,24 +53,24 @@ class LVBase {
 		this.metatable = null
 	}
 
-	add(other) { errors.arithmetic(this.type) }
-	sub(other) { errors.arithmetic(this.type) }
-	mul(other) { errors.arithmetic(this.type) }
-	div(other) { errors.arithmetic(this.type) }
-	mod(other) { errors.arithmetic(this.type) }
-	pow(other) { errors.arithmetic(this.type) }
+	add(context, other) { errors.arithmetic(context.position, this.type) }
+	sub(context, other) { errors.arithmetic(context.position, this.type) }
+	mul(context, other) { errors.arithmetic(context.position, this.type) }
+	div(context, other) { errors.arithmetic(context.position, this.type) }
+	mod(context, other) { errors.arithmetic(context.position, this.type) }
+	pow(context, other) { errors.arithmetic(context.position, this.type) }
 
-	concat(other) { errors.concatenate(this.type) }
+	concat(context, other) { errors.concatenate(context.position, this.type) }
 
-	eq(other) { return new LVBoolean(this === other) }
-	lt(other) { errors.compare(this.type, other.type) }
-	le(other) { errors.compare(this.type, other.type) }
+	eq(context, other) { return new LVBoolean(this === other) }
+	lt(context, other) { errors.compare(context.position, this.type, other.type) }
+	le(context, other) { errors.compare(context.position, this.type, other.type) }
 
-	unm() { errors.arithmetic(this.type) }
-	not() { return new LVBoolean(!this.truthy()) }
-	len() { errors.length(this.type) }
+	unm(context) { errors.arithmetic(context.position, this.type) }
+	not(context) { return new LVBoolean(!this.truthy()) }
+	len(context) { errors.length(context.position, this.type) }
 
-	truthy() { return false }
+	truthy(context) { return false }
 }
 
 class LVNumber extends LVBase {
@@ -73,7 +89,7 @@ class LVNumber extends LVBase {
 		return notFoundOperation()
 	}
 
-	add(other) {
+	add(context, other) {
 		return this.overrideable(() => {
 			let otherVal = other.value
 			if (other.type === "string") {
@@ -90,11 +106,11 @@ class LVNumber extends LVBase {
 
 			return undefined
 		}, "__add", () => {
-			errors.arithmetic(other.type)
+			errors.arithmetic(context.position, other.type)
 		})
 	}
 
-	sub(other) {
+	sub(context, other) {
 		return this.overrideable(() => {
 			let otherVal = other.value
 			if (other.type === "string") {
@@ -111,11 +127,11 @@ class LVNumber extends LVBase {
 
 			return undefined
 		}, "__sub", () => {
-			errors.arithmetic(other.type)
+			errors.arithmetic(context.position, other.type)
 		})
 	}
 
-	mul(other) {
+	mul(context, other) {
 		return this.overrideable(() => {
 			let otherVal = other.value
 			if (other.type === "string") {
@@ -132,11 +148,11 @@ class LVNumber extends LVBase {
 
 			return undefined
 		}, "__mul", () => {
-			errors.arithmetic(other.type)
+			errors.arithmetic(context.position, other.type)
 		})
 	}
 
-	div(other) {
+	div(context, other) {
 		return this.overrideable(() => {
 			let otherVal = other.value
 			if (other.type === "string") {
@@ -156,11 +172,11 @@ class LVNumber extends LVBase {
 
 			return undefined
 		}, "__div", () => {
-			errors.arithmetic(other.type)
+			errors.arithmetic(context.position, other.type)
 		})
 	}
 
-	mod(other) {
+	mod(context, other) {
 		return this.overrideable(() => {
 			let otherVal = other.value
 			if (other.type === "string") {
@@ -177,11 +193,11 @@ class LVNumber extends LVBase {
 
 			return undefined
 		}, "__mod", () => {
-			errors.arithmetic(other.type)
+			errors.arithmetic(context.position, other.type)
 		})
 	}
 
-	pow(other) {
+	pow(context, other) {
 		return this.overrideable(() => {
 			let otherVal = other.value
 			if (other.type === "string") {
@@ -198,11 +214,11 @@ class LVNumber extends LVBase {
 
 			return undefined
 		}, "__pow", () => {
-			errors.arithmetic(other.type)
+			errors.arithmetic(context.position, other.type)
 		})
 	}
 
-	concat(other) {
+	concat(context, other) {
 		return this.overrideable(() => {
 			let otherVal = other.value
 			if (other.type === "number") {
@@ -215,15 +231,15 @@ class LVNumber extends LVBase {
 
 			return undefined
 		}, "__concat", () => {
-			errors.concatenate(other.type)
+			errors.concatenate(context.position, other.type)
 		})
 	}
 
-	eq(other) {
+	eq(context, other) {
 		return new LVBoolean(this.type === other.type && this.value === other.value)
 	}
 
-	lt(other) {
+	lt(context, other) {
 		return this.overrideable(() => {
 			if (this.type === other.type) {
 				return new LVBoolean(this.value < other.value)
@@ -231,11 +247,11 @@ class LVNumber extends LVBase {
 			
 			return undefined
 		}, "__lt", () => {
-			errors.compare(this.type, other.type)
+			errors.compare(context.position, this.type, other.type)
 		})
 	}
 	
-	le(other) {
+	le(context, other) {
 		return this.overrideable(() => {
 			if (this.type === other.type) {
 				return new LVBoolean(this.value <= other.value)
@@ -243,15 +259,15 @@ class LVNumber extends LVBase {
 			
 			return undefined
 		}, "__le", () => {
-			errors.compare(this.type, other.type)
+			errors.compare(context.position, this.type, other.type)
 		})
 	}
 
-	unm() {
+	unm(context) {
 		return new LVNumber(-this.value)
 	}
 
-	truthy() {
+	truthy(context) {
 		return true
 	}
 }
@@ -265,7 +281,7 @@ class LVString extends LVBase {
 		}
 
 		if (!(bytes instanceof Uint8Array)) {
-			throw new Error("invalid string literal; could not convert to bytestring")
+			throw new LuaCFormatError("invalid string literal; could not convert to bytestring")
 		}
 
 		this.value = bytes
@@ -280,7 +296,7 @@ class LVString extends LVBase {
 		return notFoundOperation()
 	}
 
-	concat(other) {
+	concat(context, other) {
 		return this.overrideable(() => {
 			let otherVal = other.value
 			if (other.type === "number") {
@@ -293,15 +309,15 @@ class LVString extends LVBase {
 
 			return undefined
 		}, "__concat", () => {
-			errors.concatenate(other.type)
+			errors.concatenate(context.position, other.type)
 		})
 	}
 
-	eq(other) {
+	eq(context, other) {
 		return new LVBoolean(this.type === other.type && this.value === other.value)
 	}
 
-	lt(other) {
+	lt(context, other) {
 		return this.overrideable(() => {
 			if (this.type !== other.type) {
 				return undefined
@@ -323,11 +339,11 @@ class LVString extends LVBase {
 			
 			return new LVBoolean(left.length < right.length)
 		}, "__lt", () => {
-			errors.compare(this.type, other.type)
+			errors.compare(context.position, this.type, other.type)
 		})
 	}
 	
-	le(other) {
+	le(context, other) {
 		return this.overrideable(() => {
 			if (this.type === other.type && this.value === other.value) {
 				return new LVBoolean(true)
@@ -353,15 +369,15 @@ class LVString extends LVBase {
 			
 			return new LVBoolean(left.length < right.length)
 		}, "__le", () => {
-			errors.compare(this.type, other.type)
+			errors.compare(context.position, this.type, other.type)
 		})
 	}
 
-	len() {
+	len(context) {
 		return new LVNumber(this.value.length)
 	}
 
-	truthy() {
+	truthy(context) {
 		return true
 	}
 }
@@ -382,11 +398,11 @@ class LVBoolean extends LVBase {
 		return notFoundOperation()
 	}
 
-	eq(other) {
+	eq(context, other) {
 		return new LVBoolean(this.type === other.type && this.value === other.value)
 	}
 
-	truthy() {
+	truthy(context) {
 		return this.value
 	}
 }
@@ -407,11 +423,11 @@ class LVNil extends LVBase {
 		return notFoundOperation()
 	}
 
-	eq(other) {
+	eq(context, other) {
 		return new LVBoolean(this.type === other.type)
 	}
 
-	truthy() {
+	truthy(context) {
 		return false
 	}
 }
@@ -438,9 +454,9 @@ class LVTable extends LVBase {
 		return this.keyOrder.slice()
 	}
 
-	rawGet(key) {
+	rawGet(context, key) {
 		key = unwrap(key)
-	
+
 		if (typeof key === "number" && key >= 1 && Number.isInteger(key)) {
 			return this.array[key] ?? new LVNil()
 		}
@@ -448,7 +464,7 @@ class LVTable extends LVBase {
 		return this.hash[key] ?? new LVNil()
 	}
 
-	rawSet(key, value) {
+	rawSet(context, key, value) {
 		key = unwrap(key)
 	
 		if (typeof key === "number" && key >= 1 && Number.isInteger(key)) {
@@ -464,7 +480,7 @@ class LVTable extends LVBase {
 		}
 	}
 
-	len() {
+	len(context) {
 		let i = 1
 		while (this.array[i] !== undefined) {
 			i ++
@@ -473,7 +489,7 @@ class LVTable extends LVBase {
 		return new LVNumber(i - 1)
 	}
 
-	truthy() {
+	truthy(context) {
 		return true
 	}
 }
@@ -500,7 +516,7 @@ class LVFunction extends LVBase {
 		return notFoundOperation()
 	}
 
-	truthy() {
+	truthy(context) {
 		return true
 	}
 }
@@ -522,7 +538,7 @@ class LVClosure extends LVBase {
 		return notFoundOperation()
 	}
 
-	truthy() {
+	truthy(context) {
 		return true
 	}
 }
@@ -594,12 +610,12 @@ function unwrap(value) {
 	return value instanceof LVBase ? value.value : value
 }
 
-function getMeta(obj, name) {
+function getMeta(context, obj, name) {
 	if (!obj.metatable) {
 		return undefined
 	}
 
-	return obj.metatable.rawGet(name)
+	return obj.metatable.rawGet(context, name)
 }
 
 const LUA_SIGNATURE = [
@@ -640,25 +656,25 @@ class LuaVM {
 
 		for (let i = 0; i < sig.length; i ++) {
 			if (sig[i] !== LUA_SIGNATURE[i]) {
-				throw new Error("invalid luac file, incorrect signature")
+				throw new LuaCFormatError("invalid luac file, incorrect signature")
 			}
 		}
 
 		this.version = this.readByte()
 
 		if (this.version !== 0x51) {
-			throw new Error("only lua 5.1 is supported for now")
+			throw new LuaCFormatError("only lua 5.1 is supported for now")
 		}
 
 		this.format = this.readByte()
 
 		if (this.format !== 0) {
-			throw new Error("invalid luac file, format non-zero")
+			throw new LuaCFormatError("invalid luac file, format non-zero")
 		}
 
 		const endianness = this.readByte()
 		if (!([0, 1].includes(endianness))) {
-			throw new Error("invalid luac file, neither big nor small endian")
+			throw new LuaCFormatError("invalid luac file, neither big nor small endian")
 		}
 
 		this.isLittleEndian = endianness === 1
@@ -673,7 +689,7 @@ class LuaVM {
 		
 		const luaNumInt = this.readByte()
 		if (!([0, 1].includes(luaNumInt))) {
-			throw new Error("invalid luac file, lua number neither integral nor real")
+			throw new LuaCFormatError("invalid luac file, lua number neither integral nor real")
 		}
 
 		this.luaNumIsInt = luaNumInt
@@ -682,22 +698,22 @@ class LuaVM {
 
 		const mathLib = new LVTable()
 
-		mathLib.rawSet("min", new LVFunction((first, ...rest) => {
+		mathLib.rawSet(null, "min", new LVFunction((context, first, ...rest) => {
 			let best = first
 
 			for (const val of rest) {
-				if (val.lt(best).truthy()) {
+				if (val.lt(context, best).truthy()) {
 					best = val
 				}
 			}
 
 			return best
 		}))
-		mathLib.rawSet("max", new LVFunction((first, ...rest) => {
+		mathLib.rawSet(null, "max", new LVFunction((context, first, ...rest) => {
 			let best = first
 
 			for (const val of rest) {
-				if (best.lt(val).truthy()) {
+				if (best.lt(context, val).truthy()) {
 					best = val
 				}
 			}
@@ -705,15 +721,15 @@ class LuaVM {
 			return best
 		}))
 
-		this.globals.rawSet("math", mathLib)
+		this.globals.rawSet(null, "math", mathLib)
 
-		this.globals.rawSet("print", new LVFunction((...msgs) => {
+		this.globals.rawSet(null, "print", new LVFunction((context, ...msgs) => {
 			console.log(...(msgs.map((msg) => unwrap(msg))))
 		}))
 
-		this.globals.rawSet("next", new LVFunction((table, lastKey) => {
+		this.globals.rawSet(null, "next", new LVFunction((context, table, lastKey) => {
 			if (table.type !== "table") {
-				errors.badArg(1, "next", table.type, "table")
+				errors.badArgType(context.position, 1, "next", table.type, "table")
 			}
 
 			const keys = table.keys()
@@ -722,7 +738,7 @@ class LuaVM {
 			if (lastKey.type !== "nil") {
 				start = keys.findIndex((key) => key == unwrap(lastKey))
 				if (start === -1) {
-					throw new Error("invalid key to \'next\'")
+					throw new LuaError(context.position, `invalid key to \'next\'`)
 				}
 
 				start ++
@@ -733,22 +749,22 @@ class LuaVM {
 			}
 
 			const key = keys[start]
-			const val = table.rawGet(key)
+			const val = table.rawGet(context, key)
 
 			return new LVTuple([wrap(key), val])
 		}))
 
-		this.globals.rawSet("select", new LVFunction((index, ...args) => {
+		this.globals.rawSet(null, "select", new LVFunction((context, index, ...args) => {
 			if (unwrap(index) === "#") {
 				return wrap(args.length)
 			}
 
 			if (index.type !== "number") {
-				errors.badArg(1, "select", index.type, "number")
+				errors.badArgType(context.position, 1, "select", index.type, "number")
 			}
 			const value = unwrap(index)
 			if (!Number.isInteger(value)) {
-				throw new Error("bad argument #1 to \'select\' (number has no integer representation)")
+				throw new LuaError(context.position, `bad argument #1 to \'select\' (number has no integer representation)`)
 			}
 
 			if (value > args.length) {
@@ -759,14 +775,14 @@ class LuaVM {
 			}
 
 			if (value <= 0) {
-				throw new Error("bad argument #1 to \'select\' (index out of range)")
+				throw new LuaError(context.position, `bad argument #1 to \'select\' (index out of range)`)
 			}
 
 			return new LVTuple(args.slice(value - 1))
 		}))
 
-		this.globals.rawSet("pairs", new LVFunction((table) => {
-			const nextFn = this.globals.rawGet("next")
+		this.globals.rawSet(null, "pairs", new LVFunction((context, table) => {
+			const nextFn = this.globals.rawGet(context, "next")
 
 			return new LVTuple([nextFn, table, new LVNil()])
 		}))
@@ -805,7 +821,7 @@ class LuaVM {
 			case 8:
 				return Number(new DataView(this.readBytes(8).buffer).getBigInt64(0, this.isLittleEndian))
 			default:
-				throw new Error(`unsupported lua number size: ${this.intSize}`)
+				throw new LuaCFormatError(`unsupported lua number size: ${this.intSize}`)
 		}
 	}
 	readLuaUInt() {
@@ -819,7 +835,7 @@ class LuaVM {
 			case 8:
 				return Number(new DataView(this.readBytes(8).buffer).getBigUint64(0, this.isLittleEndian))
 			default:
-				throw new Error(`unsupported lua number size: ${this.intSize}`)
+				throw new LuaCFormatError(`unsupported lua number size: ${this.intSize}`)
 		}
 	}
 
@@ -834,7 +850,7 @@ class LuaVM {
 			case 8:
 				return Number(new DataView(this.readBytes(8).buffer).getBigUint64(0, this.isLittleEndian))
 			default:
-				throw new Error(`unsupported lua number size: ${this.sizeTSize}`)
+				throw new LuaCFormatError(`unsupported lua number size: ${this.sizeTSize}`)
 		}
 	}
 
@@ -850,7 +866,7 @@ class LuaVM {
 				case 8:
 					return Number(new DataView(this.readBytes(8).buffer).getBigInt64(0, this.isLittleEndian))
 				default:
-					throw new Error(`unsupported lua number size: ${this.luaNumSize}`)
+					throw new LuaCFormatError(`unsupported lua number size: ${this.luaNumSize}`)
 			}
 		}
 		else {
@@ -860,7 +876,7 @@ class LuaVM {
 				case 8:
 					return new DataView(this.readBytes(8).buffer).getFloat64(0, this.isLittleEndian)
 				default:
-					throw new Error(`unsupported lua number size: ${this.luaNumSize}`)
+					throw new LuaCFormatError(`unsupported lua number size: ${this.luaNumSize}`)
 			}
 		}
 	}
@@ -878,7 +894,10 @@ class LuaVM {
 	}
 
 	readPrototype() {
-		const fileName = this.readLuaString()
+		let fileName = this.readLuaString()
+		if (fileName !== null) {
+			fileName = fileName.slice(1)
+		}
 
 		const lineDefined = this.readLuaInt()
 		const lastLineDefined = this.readLuaInt()
@@ -906,7 +925,7 @@ class LuaVM {
 					insts.push(new DataView(this.readBytes(4).buffer).getUint32(0, this.isLittleEndian))
 					break
 				default:
-					throw new Error(`unsupported instruction size: ${this.instSize}`)
+					throw new LuaCFormatError(`unsupported instruction size: ${this.instSize}`)
 			}
 		}
 
@@ -930,7 +949,7 @@ class LuaVM {
 					constants.push(new LVString(this.readLuaString()))
 					break
 				default:
-					throw new Error(`unsupported constant type: ${constType}`)
+					throw new LuaCFormatError(`unsupported constant type: ${constType}`)
 			}
 		}
 
@@ -1097,6 +1116,14 @@ class LuaVM {
 
 			const { A, B, C, Bx, sBx } = inst
 
+			const position = {
+				fileName: proto.fileName,
+				line: proto.lineInfo[pc]
+			}
+			const context = {
+				position
+			}
+
 			switch (inst.name) {
 				case "MOVE": {
 					setReg(A, regs[B])
@@ -1126,7 +1153,7 @@ class LuaVM {
 
 				case "GETGLOBAL": {
 					const key = proto.constants[Bx]
-					const val = this.globals.rawGet(key)
+					const val = this.globals.rawGet(context, key)
 					
 					setReg(A, val)
 					break
@@ -1135,7 +1162,7 @@ class LuaVM {
 				case "SETGLOBAL": {
 					const key = proto.constants[Bx]
 
-					this.globals.rawSet(key, regs[A])
+					this.globals.rawSet(context, key, regs[A])
 					break
 				}
 
@@ -1155,7 +1182,7 @@ class LuaVM {
 					const table = regs[B]
 					const key = RK(regs, proto, C)
 
-					setReg(A, table.rawGet(key))
+					setReg(A, table.rawGet(context, key))
 					break
 				}
 
@@ -1165,7 +1192,7 @@ class LuaVM {
 					const key = RK(regs, proto, B)
 					const val = RK(regs, proto, C)
 					
-					table.rawSet(key, val)
+					table.rawSet(context, key, val)
 					break
 				}
 
@@ -1175,7 +1202,7 @@ class LuaVM {
 
 					setReg(A + 1, table)
 
-					setReg(A, table.rawGet(key))
+					setReg(A, table.rawGet(context, key))
 					break
 				}
 
@@ -1196,7 +1223,7 @@ class LuaVM {
 
 					for (let i = 1; i <= count; i ++) {
 						const val = regs[A + i]
-						table.rawSet(offset + i, val)
+						table.rawSet(context, offset + i, val)
 					}
 
 					break
@@ -1217,7 +1244,7 @@ class LuaVM {
 								newClosure.upvalues[i] = closure.upvalues[upValueInst.B]
 								break
 							default:
-								throw new Error(`invalid upvalue binding instruction: ${upValueInst.name}`)
+								throw new LuaError(position, `invalid upvalue binding instruction: ${upValueInst.name}`)
 						}
 					}
 
@@ -1267,13 +1294,13 @@ class LuaVM {
 						result = callee(...args)
 					}
 					else if (callee instanceof LVFunction) {
-						result = callee.value(...args)
+						result = callee.value(context, ...args)
 					}
 					else if (callee instanceof LVClosure) {
 						result = this.runClosure(callee, ...args)
 					}
 					else {
-						errors.call(callee.type)
+						errors.call(position, callee.type)
 					}
 
 					const values = normalize(result)
@@ -1341,13 +1368,13 @@ class LuaVM {
 					}
 
 					if (callee instanceof LVFunction) {
-						return callee.value(...args)
+						return callee.value(context, ...args)
 					}
 					else if (callee instanceof LVClosure) {
 						return this.runClosure(callee, ...args)
 					}
 					else {
-						errors.call(callee.type)
+						errors.call(position, callee.type)
 					}
 				}
 
@@ -1363,12 +1390,12 @@ class LuaVM {
 					let result
 
 					switch (inst.name) {
-						case "ADD": result = left.add(right); break
-						case "SUB": result = left.sub(right); break
-						case "MUL": result = left.mul(right); break
-						case "DIV": result = left.div(right); break
-						case "MOD": result = left.mod(right); break
-						case "POW": result = left.pow(right); break
+						case "ADD": result = left.add(context, right); break
+						case "SUB": result = left.sub(context, right); break
+						case "MUL": result = left.mul(context, right); break
+						case "DIV": result = left.div(context, right); break
+						case "MOD": result = left.mod(context, right); break
+						case "POW": result = left.pow(context, right); break
 					}
 
 					setReg(A, result)
@@ -1381,7 +1408,7 @@ class LuaVM {
 					for (let i = B + 1; i <= C; i ++) {
 						const next = first(RK(regs, proto, i))
 						
-						result = result.concat(next)
+						result = result.concat(context, next)
 					}
 
 					setReg(A, result)
@@ -1397,9 +1424,9 @@ class LuaVM {
 					let result
 
 					switch (inst.name) {
-						case "EQ": result = left.eq(right); break
-						case "LT": result = left.lt(right); break
-						case "LE": result = left.le(right); break
+						case "EQ": result = left.eq(context, right); break
+						case "LT": result = left.lt(context, right); break
+						case "LE": result = left.le(context, right); break
 					}
 
 					if (result.truthy() !== (A !== 0)) {
@@ -1422,7 +1449,7 @@ class LuaVM {
 				case "TEST":
 				case "TESTSET": {
 					const val = regs[B]
-					const cond = val.truthy()
+					const cond = val.truthy(context)
 
 					if (cond !== (C !== 0)) {
 						pc ++
@@ -1440,9 +1467,9 @@ class LuaVM {
 					let result
 
 					switch (inst.name) {
-						case "UNM": result = value.unm(); break
-						case "NOT": result = value.not(); break
-						case "LEN": result = value.len(); break
+						case "UNM": result = value.unm(context); break
+						case "NOT": result = value.not(context); break
+						case "LEN": result = value.len(context); break
 					}
 
 					setReg(A, result)
@@ -1450,7 +1477,7 @@ class LuaVM {
 				}
 
 				case "FORPREP": {
-					setReg(A, regs[A].sub(regs[A + 2]))
+					setReg(A, regs[A].sub(context, regs[A + 2]))
 
 					pc += sBx
 					break
@@ -1462,27 +1489,27 @@ class LuaVM {
 					const step = regs[A + 2]
 
 					if (counter.type !== "number") {
-						errors.forInit()
+						errors.forInit(position)
 					}
 					if (limit.type !== "number") {
-						errors.forLimit()
+						errors.forLimit(position)
 					}
 					if (step.type !== "number") {
-						errors.forStep()
+						errors.forStep(position)
 					}
 
-					const newCounter = counter.add(step)
+					const newCounter = counter.add(context, step)
 					setReg(A, newCounter)
 
 					let continueLoop = false
 
-					if (step.le(wrap(0)).truthy()) {
-						if (limit.le(newCounter).truthy()) {
+					if (step.le(context, wrap(0)).truthy()) {
+						if (limit.le(context, newCounter).truthy()) {
 							continueLoop = true
 						}
 					}
 					else {
-						if (newCounter.le(limit).truthy()) {
+						if (newCounter.le(context, limit).truthy()) {
 							continueLoop = true
 						}
 					}
@@ -1502,11 +1529,11 @@ class LuaVM {
 
 					let result
 					if (iter instanceof LVFunction) {
-						result = iter.value(state, ctrl)
+						result = iter.value(context, state, ctrl)
 					} else if (iter instanceof LVClosure) {
 						result = this.runClosure(iter, state, ctrl)
 					} else {
-						errors.call(iter.type)
+						errors.call(position, iter.type)
 					}
 
 					const values = normalize(result)
@@ -1551,7 +1578,7 @@ class LuaVM {
 				}
 
 				default: {
-					throw new Error(`invalid opcode ${inst.name}`)
+					throw new LuaCFormatError(`invalid opcode ${inst.name}`)
 				}
 			}
 		}
