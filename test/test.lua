@@ -1,1 +1,0 @@
-print(math.min("Hello, World!", "fgs"))
