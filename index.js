@@ -928,6 +928,13 @@ class LuaVM {
 			return wrap(table.metatable)
 		}))
 
+		this.globals.rawSet(null, "tonumber", new LVFunction((context, value) => {
+			return value.asNumber(context)
+		}))
+		this.globals.rawSet(null, "tostring", new LVFunction((context, value) => {
+			return value.asString(context)
+		}))
+
 		this.mainProto = this.readPrototype()
 	}
 
