@@ -669,7 +669,7 @@ class LVUpValue {
     }
 }
 
-function wrap(value) {
+function wrap(context, value) {
 	if (value instanceof LVBase) {
 		return value
 	}
@@ -684,7 +684,22 @@ function wrap(value) {
 				return new LVNil()
 			}
 			
-			return new LVTable()
+			const tbl = new LVTable()
+
+			if (Array.isArray(value)) {
+				for (let i = 0; i < value.length; i ++) {
+					const item = value[i]
+
+					tbl.rawSet(context, wrap(context, i + 1), wrap(context, item))
+				}
+			}
+			else {
+				for (const key in value) {
+					const val = value[key]
+
+					tbl.rawSet(context, wrap(context, key), wrap(context, val))
+				}
+			}
 		default:
 			return new LVNil()
 	}
@@ -812,6 +827,73 @@ class LuaVM {
 
 		const mathLib = new LVTable()
 
+		mathLib.rawSet(null, "abs", new LVFunction((context, value) => {
+			if (value.type !== "number") {
+				errors.badArgType(context.position, 1, "abs", value.type, "number")
+			}
+
+			return wrap(context, Math.abs(value.value))
+		}))
+
+		mathLib.rawSet(null, "asin", new LVFunction((context, value) => {
+			if (value.type !== "number") {
+				errors.badArgType(context.position, 1, "asin", value.type, "number")
+			}
+
+			return wrap(context, Math.asin(value.value))
+		}))
+		mathLib.rawSet(null, "acos", new LVFunction((context, value) => {
+			if (value.type !== "number") {
+				errors.badArgType(context.position, 1, "acos", value.type, "number")
+			}
+
+			return wrap(context, Math.acos(value.value))
+		}))
+		mathLib.rawSet(null, "atan", new LVFunction((context, value) => {
+			if (value.type !== "number") {
+				errors.badArgType(context.position, 1, "atan", value.type, "number")
+			}
+
+			return wrap(context, Math.atan(value.value))
+		}))
+
+		mathLib.rawSet(null, "floor", new LVFunction((context, value) => {
+			if (value.type !== "number") {
+				errors.badArgType(context.position, 1, "floor", value.type, "number")
+			}
+
+			return wrap(context, Math.floor(value.value))
+		}))
+		mathLib.rawSet(null, "ceil", new LVFunction((context, value) => {
+			if (value.type !== "number") {
+				errors.badArgType(context.position, 1, "ceil", value.type, "number")
+			}
+
+			return wrap(context, Math.ceil(value.value))
+		}))
+
+		mathLib.rawSet(null, "sin", new LVFunction((context, value) => {
+			if (value.type !== "number") {
+				errors.badArgType(context.position, 1, "sin", value.type, "number")
+			}
+
+			return wrap(context, Math.sin(value.value))
+		}))
+		mathLib.rawSet(null, "cos", new LVFunction((context, value) => {
+			if (value.type !== "number") {
+				errors.badArgType(context.position, 1, "cos", value.type, "number")
+			}
+
+			return wrap(context, Math.cos(value.value))
+		}))
+		mathLib.rawSet(null, "tan", new LVFunction((context, value) => {
+			if (value.type !== "number") {
+				errors.badArgType(context.position, 1, "tan", value.type, "number")
+			}
+
+			return wrap(context, Math.tan(value.value))
+		}))
+
 		mathLib.rawSet(null, "min", new LVFunction((context, first, ...rest) => {
 			let best = first
 
@@ -835,12 +917,140 @@ class LuaVM {
 			return best
 		}))
 
-		mathLib.rawSet(null, "abs", new LVFunction((context, value) => {
+		mathLib.rawSet(null, "deg", new LVFunction((context, value) => {
 			if (value.type !== "number") {
-				errors.badArgType(context.position, 1, "abs", value.type, "number")
+				errors.badArgType(context.position, 1, "deg", value.type, "number")
 			}
 
-			return wrap(Math.abs(value.value))
+			return wrap(context, value.value * (180 / Math.PI))
+		}))
+		mathLib.rawSet(null, "rad", new LVFunction((context, value) => {
+			if (value.type !== "number") {
+				errors.badArgType(context.position, 1, "rad", value.type, "number")
+			}
+
+			return wrap(context, value.value / (180 / Math.PI))
+		}))
+
+		mathLib.rawSet(null, "exp", new LVFunction((context, value) => {
+			if (value.type !== "number") {
+				errors.badArgType(context.position, 1, "exp", value.type, "number")
+			}
+
+			return wrap(context, Math.exp(value.value))
+		}))
+
+		mathLib.rawSet(null, "fmod", new LVFunction((context, left, right) => {
+			if (left.type !== "number") {
+				errors.badArgType(context.position, 1, "fmod", left.type, "number")
+			}
+			if (right.type !== "number") {
+				errors.badArgType(context.position, 1, "fmod", right.type, "number")
+			}
+
+			return wrap(context, Math.floor(left.value % right.value))
+		}))
+		mathLib.rawSet(null, "modf", new LVFunction((context, value) => {
+			if (value.type !== "number") {
+				errors.badArgType(context.position, 1, "modf", value.type, "number")
+			}
+
+			return new LVTuple([wrap(context, Math.floor(value.value)), wrap(context, value.value - Math.floor(value.value))])
+		}))
+
+		mathLib.rawSet(null, "huge", wrap(null, Infinity))
+
+		mathLib.rawSet(null, "log", new LVFunction((context, value, base) => {
+			if (value.type !== "number") {
+				errors.badArgType(context.position, 1, "log", value.type, "number")
+			}
+			if (base.type !== "number") {
+				errors.badArgType(context.position, 1, "log", base.type, "number")
+			}
+
+			return wrap(context, Math.log(value.value) / Math.log(base.value))
+		}))
+
+		mathLib.rawSet(null, "maxinteger", wrap(null, Infinity))
+		mathLib.rawSet(null, "mininteger", wrap(null, -Infinity))
+
+		mathLib.rawSet(null, "pi", wrap(null, Math.PI))
+
+		mathLib.rawSet(null, "random", new LVFunction((context, min, max) => {
+			if (min === undefined && max === undefined) {
+				return wrap(context, Math.random())
+			}
+			else if (max === undefined) {
+				if (!Number.isInteger(min.value)) {
+					throw new LuaError(context.position, "bad argument #1 to 'random' (number has no integer representation)")
+				}
+
+				return wrap(context, Math.floor(Math.random() * min.value) + 1)
+			}
+
+			if (!Number.isInteger(min.value)) {
+				throw new LuaError(context.position, "bad argument #1 to 'random' (number has no integer representation)")
+			}
+			if (!Number.isInteger(max.value)) {
+				throw new LuaError(context.position, "bad argument #2 to 'random' (number has no integer representation)")
+			}
+
+			return wrap(context, Math.floor(Math.random() * (max.value - min.value + 1)) + min.value)
+		}))
+
+		mathLib.rawSet(null, "sqrt", new LVFunction((context, value) => {
+			if (value.type !== "number") {
+				errors.badArgType(context.position, 1, "sqrt", value.type, "number")
+			}
+
+			return wrap(context, Math.sqrt(value.value))
+		}))
+
+		mathLib.rawSet(null, "tointeger", new LVFunction((context, value) => {
+			if (value.type !== "number") {
+				errors.badArgType(context.position, 1, "tointeger", value.type, "number")
+			}
+
+			if (!Number.isInteger(value.value)) {
+				return new LVNil()
+			}
+
+			return value
+		}))
+
+		mathLib.rawSet(null, "type", new LVFunction((context, value) => {
+			if (value.type !== "number") {
+				return new LVNil()
+			}
+
+			if (isNaN(value.value)) {
+				return wrap(context, "float")
+			}
+
+			if (!Number.isInteger(value.value)) {
+				return wrap(context, "float")
+			}
+
+			return wrap(context, "integer")
+		}))
+
+		mathLib.rawSet(null, "ult", new LVFunction((context, left, right) => {
+			if (left.type !== "number") {
+				errors.badArgType(context.position, 1, "ult", left.type, "number")
+			}
+			if (right.type !== "number") {
+				errors.badArgType(context.position, 2, "ult", right.type, "number")
+			}
+
+			if (!Number.isInteger(left.value)) {
+				throw new LuaError(context.position, "bad argument #1 to 'random' (number has no integer representation)")
+			}
+			if (!Number.isInteger(right.value)) {
+				throw new LuaError(context.position, "bad argument #2 to 'random' (number has no integer representation)")
+			}
+
+			// TODO: do UNSIGNED comparison
+			return wrap(context, left.value < right.value)
 		}))
 
 		this.globals.rawSet(null, "math", mathLib)
@@ -867,7 +1077,7 @@ class LuaVM {
 			}
 
 			if (start >= keys.length) {
-				return wrap()
+				return wrap(context)
 			}
 
 			const key = keys[start]
@@ -878,7 +1088,7 @@ class LuaVM {
 
 		this.globals.rawSet(null, "select", new LVFunction((context, index, ...args) => {
 			if (unwrap(index) === "#") {
-				return wrap(args.length)
+				return wrap(context, args.length)
 			}
 
 			if (index.type !== "number") {
@@ -933,7 +1143,7 @@ class LuaVM {
 				return protection
 			}
 
-			return wrap(table.metatable)
+			return wrap(context, table.metatable)
 		}))
 
 		this.globals.rawSet(null, "tonumber", new LVFunction((context, value) => {
@@ -1238,12 +1448,12 @@ class LuaVM {
 
 		const LFIELDS_PER_FLUSH = 50
 
-		const normalize = (result) => {
+		const normalize = (context, result) => {
 			if (result instanceof LVTuple) {
 				return result.values
 			}
 
-			return [wrap(result)]
+			return [wrap(context, result)]
 		}
 
 		const findOrCreateUpValue = (regIndex) => {
@@ -1447,7 +1657,7 @@ class LuaVM {
 
 					let result = call(context, callee, ...args)
 
-					const values = normalize(result)
+					const values = normalize(context, result)
 
 					if (C === 0) {
 						for (let i = 0; i < values.length; i ++) {
@@ -1639,7 +1849,7 @@ class LuaVM {
 
 					let continueLoop = false
 
-					if (step.le(context, wrap(0)).truthy()) {
+					if (step.le(context, wrap(context, 0)).truthy()) {
 						if (limit.le(context, newCounter).truthy()) {
 							continueLoop = true
 						}
@@ -1665,7 +1875,7 @@ class LuaVM {
 
 					let result = call(context, iter, state, ctrl)
 
-					const values = normalize(result)
+					const values = normalize(context, result)
 
 					const newCtrl = values[0] ?? new LVNil()
 
