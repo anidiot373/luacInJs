@@ -1043,10 +1043,10 @@ class LuaVM {
 			}
 
 			if (!Number.isInteger(left.value)) {
-				throw new LuaError(context.position, "bad argument #1 to 'random' (number has no integer representation)")
+				throw new LuaError(context.position, "bad argument #1 to 'ult' (number has no integer representation)")
 			}
 			if (!Number.isInteger(right.value)) {
-				throw new LuaError(context.position, "bad argument #2 to 'random' (number has no integer representation)")
+				throw new LuaError(context.position, "bad argument #2 to 'ult' (number has no integer representation)")
 			}
 
 			// TODO: do UNSIGNED comparison
