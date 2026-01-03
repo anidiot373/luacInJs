@@ -835,6 +835,14 @@ class LuaVM {
 			return best
 		}))
 
+		mathLib.rawSet(null, "abs", new LVFunction((context, value) => {
+			if (value.type !== "number") {
+				errors.badArgType(context.position, 1, "abs", value.type, "number")
+			}
+
+			return wrap(Math.abs(value.value))
+		}))
+
 		this.globals.rawSet(null, "math", mathLib)
 
 		this.globals.rawSet(null, "print", new LVFunction((context, ...msgs) => {
@@ -859,7 +867,7 @@ class LuaVM {
 			}
 
 			if (start >= keys.length) {
-				return new LVNil()
+				return wrap()
 			}
 
 			const key = keys[start]
