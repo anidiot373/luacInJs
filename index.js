@@ -64,6 +64,9 @@ class LVBase {
 	constructor(type) {
 		this.type = type
 		this.metatable = null
+
+		// playing pretend :3
+		this.address = Math.floor(Math.random() * 0xFFFFFFF)
 	}
 
 	overrideable(context, operation, metaMethodName, notFoundOperation, ...metaArgs) {
@@ -165,6 +168,8 @@ class LVBase {
 
 	asNumber(context) { return new LVNil() }
 	asString(context) { return new LVNil() }
+
+	print(context) { return `${this.type}: 0x${this.address.toString(16).padStart(7, "0")}` }
 
 	truthy(context) { return false }
 }
@@ -379,6 +384,10 @@ class LVNumber extends LVBase {
 		return new LVString(String(this.value))
 	}
 
+	print(context) {
+		return String(this.value)
+	}
+
 	truthy(context) {
 		return true
 	}
@@ -493,6 +502,10 @@ class LVString extends LVBase {
 		return new LVString(this.value)
 	}
 
+	print(context) {
+		return new TextDecoder("utf-8").decode(this.value)
+	}
+
 	truthy(context) {
 		return true
 	}
@@ -509,6 +522,10 @@ class LVBoolean extends LVBase {
 		return new LVBoolean(this.type === other.type && this.value === other.value)
 	}
 
+	print(context) {
+		return String(this.value)
+	}
+
 	truthy(context) {
 		return this.value
 	}
@@ -523,6 +540,10 @@ class LVNil extends LVBase {
 
 	eq(context, other) {
 		return new LVBoolean(this.type === other.type)
+	}
+
+	print(context) {
+		return "nil"
 	}
 
 	truthy(context) {
@@ -700,6 +721,13 @@ function call(context, value, ...args) {
 		return context.vm.runClosure(value, ...args)
 	}
 	else {
+		if (value instanceof LVBase) {
+			const metaMethod = getMeta(context, value, "__call")
+			if (metaMethod && metaMethod.truthy()) {
+				return call(context, metaMethod, value, ...args)
+			}
+		}
+
 		errors.call(context.position, value?.type ?? typeof value)
 	}
 }
@@ -810,7 +838,7 @@ class LuaVM {
 		this.globals.rawSet(null, "math", mathLib)
 
 		this.globals.rawSet(null, "print", new LVFunction((context, ...msgs) => {
-			console.log(...(msgs.map((msg) => unwrap(msg))))
+			console.log(...(msgs.map((msg) => msg.print(context))))
 		}))
 
 		this.globals.rawSet(null, "next", new LVFunction((context, table, lastKey) => {
@@ -877,6 +905,11 @@ class LuaVM {
 			if (table.type !== "table") {
 				errors.badArgType(context.position, 1, "setmetatable", table.type, "table")
 			}
+			
+			const protection = getMeta(context, table, "__metatable")
+			if (protection && protection.type !== "nil") {
+				throw new LuaError(context.position, "cannot change a protected metatable")
+			}
 
 			table.metatable = metatable
 
@@ -887,7 +920,12 @@ class LuaVM {
 				errors.badArgType(context.position, 1, "getmetatable", table.type, "table")
 			}
 
-			return table.metatable
+			const protection = getMeta(context, table, "__metatable")
+			if (protection && protection.type !== "nil") {
+				return protection
+			}
+
+			return wrap(table.metatable)
 		}))
 
 		this.mainProto = this.readPrototype()
