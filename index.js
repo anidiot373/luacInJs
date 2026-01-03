@@ -47,28 +47,124 @@ const errors = {
 	}
 }
 
+function compHandler(context, value1, value2, metaMethodName) {
+	if (value1.type !== value2.type) { return undefined }
+
+	const metaMethod1 = getMeta(context, value1, metaMethodName)
+	const metaMethod2 = getMeta(context, value2, metaMethodName)
+
+	if (metaMethod1 === metaMethod2 || unwrap(metaMethod1.eq(context, metaMethod2))) {
+		return metaMethod1
+	}
+	
+	return undefined
+}
+
 class LVBase {
 	constructor(type) {
 		this.type = type
 		this.metatable = null
 	}
 
-	add(context, other) { errors.arithmetic(context.position, this.type) }
-	sub(context, other) { errors.arithmetic(context.position, this.type) }
-	mul(context, other) { errors.arithmetic(context.position, this.type) }
-	div(context, other) { errors.arithmetic(context.position, this.type) }
-	mod(context, other) { errors.arithmetic(context.position, this.type) }
-	pow(context, other) { errors.arithmetic(context.position, this.type) }
+	overrideable(context, operation, metaMethodName, notFoundOperation, ...metaArgs) {
+		const result = operation()
+		if (result !== undefined) {
+			return result
+		}
 
-	concat(context, other) { errors.concatenate(context.position, this.type) }
+		const metaMethod = getMeta(context, this, metaMethodName)
+		if (metaMethod && metaMethod.truthy(context)) {
+			return call(context, metaMethod, this, ...metaArgs)
+		}
 
-	eq(context, other) { return new LVBoolean(this === other) }
-	lt(context, other) { errors.compare(context.position, this.type, other.type) }
-	le(context, other) { errors.compare(context.position, this.type, other.type) }
+		return notFoundOperation()
+	}
+	overrideableTwoSides(context, operation, metaMethodName, notFoundOperation, other) {
+		const result = operation()
+		if (result !== undefined) {
+			return result
+		}
 
-	unm(context) { errors.arithmetic(context.position, this.type) }
+		const metaMethod = getMeta(context, this, metaMethodName)
+		if (metaMethod && metaMethod.truthy(context)) {
+			return call(context, metaMethod, this, other)
+		}
+		else {
+			const otherMeta = getMeta(context, other, metaMethodName)
+			if (otherMeta && otherMeta.truthy(context)) {
+				return call(context, otherMeta, this, other)
+			}
+		}
+
+		return notFoundOperation()
+	}
+
+	add(context, other) {
+		return this.overrideable(context, () => undefined, "__add", () => errors.arithmetic(context.position, this.type), other)
+	}
+	sub(context, other) {
+		return this.overrideable(context, () => undefined, "__sub", () => errors.arithmetic(context.position, this.type), other)
+	}
+	mul(context, other) {
+		return this.overrideable(context, () => undefined, "__mul", () => errors.arithmetic(context.position, this.type), other)
+	}
+	div(context, other) {
+		return this.overrideable(context, () => undefined, "__div", () => errors.arithmetic(context.position, this.type), other)
+	}
+	mod(context, other) {
+		return this.overrideable(context, () => undefined, "__mod", () => errors.arithmetic(context.position, this.type), other)
+	}
+	pow(context, other) {
+		return this.overrideable(context, () => undefined, "__pow", () => errors.arithmetic(context.position, this.type), other)
+	}
+
+	concat(context, other) {
+		return this.overrideableTwoSides(context, () => undefined, "__concat", () => errors.concatenate(context.position, this.type), other)
+	}
+
+	eq(context, other) {
+		if (this.type !== other.type) {
+			return new LVBoolean(false)
+		}
+		if (this === other) {
+			return new LVBoolean(true)
+		}
+
+		return this.overrideable(context, () => undefined, "__eq", () => new LVBoolean(false), other)
+	}
+	lt(context, other) {
+		const metaMethod = compHandler(context, this, other, "__lt")
+		if (metaMethod && metaMethod.truthy(context)) {
+			return call(context, metaMethod, this, other)
+		}
+
+		errors.compare(context.position, this.type, other.type)
+	}
+	le(context, other) {
+		const metaMethod = compHandler(context, this, other, "__le")
+		if (metaMethod && metaMethod.truthy(context)) {
+			return call(context, metaMethod, this, other)
+		}
+		else {
+			const otherMeta = compHandler(context, this, other, "__lt")
+			if (otherMeta && otherMeta.truthy(context)) {
+				return call(context, otherMeta, other, this).not(context)
+			}
+		}
+
+		errors.compare(context.position, this.type, other.type)
+	}
+
+	unm(context) {
+		return this.overrideable(context, () => undefined, "__unm", () => errors.arithmetic(context.position, this.type), other)
+	}
 	not(context) { return new LVBoolean(!this.truthy()) }
-	len(context) { errors.length(context.position, this.type) }
+	len(context) {
+		return this.overrideable(context, () => undefined, "__len", () => errors.length(context.position, this.type))
+	}
+
+	asNumber(context) { return new LVNil() }
+	asString(context) { return new LVNil() }
 
 	truthy(context) { return false }
 }
@@ -80,21 +176,14 @@ class LVNumber extends LVBase {
 		this.value = num
 	}
 
-	overrideable(operation, metaMethodName, notFoundOperation) {
-		const result = operation()
-		if (result !== undefined) {
-			return result
-		}
-
-		return notFoundOperation()
-	}
-
 	add(context, other) {
-		return this.overrideable(() => {
-			let otherVal = other.value
-			if (other.type === "string") {
-				otherVal = Number(otherVal)
+		return this.overrideable(context, () => {
+			let otherVal = other.asNumber(context)
+			if (otherVal instanceof LVNil) {
+				return undefined
 			}
+
+			otherVal = otherVal.value
 
 			if (isNaN(otherVal)) {
 				return undefined
@@ -107,15 +196,17 @@ class LVNumber extends LVBase {
 			return undefined
 		}, "__add", () => {
 			errors.arithmetic(context.position, other.type)
-		})
+		}, other)
 	}
 
 	sub(context, other) {
-		return this.overrideable(() => {
-			let otherVal = other.value
-			if (other.type === "string") {
-				otherVal = Number(otherVal)
+		return this.overrideable(context, () => {
+			let otherVal = other.asNumber(context)
+			if (otherVal instanceof LVNil) {
+				return undefined
 			}
+
+			otherVal = otherVal.value
 
 			if (isNaN(otherVal)) {
 				return undefined
@@ -128,15 +219,17 @@ class LVNumber extends LVBase {
 			return undefined
 		}, "__sub", () => {
 			errors.arithmetic(context.position, other.type)
-		})
+		}, other)
 	}
 
 	mul(context, other) {
-		return this.overrideable(() => {
-			let otherVal = other.value
-			if (other.type === "string") {
-				otherVal = Number(otherVal)
+		return this.overrideable(context, () => {
+			let otherVal = other.asNumber(context)
+			if (otherVal instanceof LVNil) {
+				return undefined
 			}
+
+			otherVal = otherVal.value
 
 			if (isNaN(otherVal)) {
 				return undefined
@@ -149,15 +242,17 @@ class LVNumber extends LVBase {
 			return undefined
 		}, "__mul", () => {
 			errors.arithmetic(context.position, other.type)
-		})
+		}, other)
 	}
 
 	div(context, other) {
-		return this.overrideable(() => {
-			let otherVal = other.value
-			if (other.type === "string") {
-				otherVal = Number(otherVal)
+		return this.overrideable(context, () => {
+			let otherVal = other.asNumber(context)
+			if (otherVal instanceof LVNil) {
+				return undefined
 			}
+
+			otherVal = otherVal.value
 
 			if (isNaN(otherVal)) {
 				return undefined
@@ -173,15 +268,17 @@ class LVNumber extends LVBase {
 			return undefined
 		}, "__div", () => {
 			errors.arithmetic(context.position, other.type)
-		})
+		}, other)
 	}
 
 	mod(context, other) {
-		return this.overrideable(() => {
-			let otherVal = other.value
-			if (other.type === "string") {
-				otherVal = Number(otherVal)
+		return this.overrideable(context, () => {
+			let otherVal = other.asNumber(context)
+			if (otherVal instanceof LVNil) {
+				return undefined
 			}
+
+			otherVal = otherVal.value
 
 			if (isNaN(otherVal)) {
 				return undefined
@@ -194,15 +291,17 @@ class LVNumber extends LVBase {
 			return undefined
 		}, "__mod", () => {
 			errors.arithmetic(context.position, other.type)
-		})
+		}, other)
 	}
 
 	pow(context, other) {
-		return this.overrideable(() => {
-			let otherVal = other.value
-			if (other.type === "string") {
-				otherVal = Number(otherVal)
+		return this.overrideable(context, () => {
+			let otherVal = other.asNumber(context)
+			if (otherVal instanceof LVNil) {
+				return undefined
 			}
+
+			otherVal = otherVal.value
 
 			if (isNaN(otherVal)) {
 				return undefined
@@ -215,11 +314,11 @@ class LVNumber extends LVBase {
 			return undefined
 		}, "__pow", () => {
 			errors.arithmetic(context.position, other.type)
-		})
+		}, other)
 	}
 
 	concat(context, other) {
-		return this.overrideable(() => {
+		return this.overrideable(context, () => {
 			let otherVal = other.value
 			if (other.type === "number") {
 				otherVal = String(otherVal)
@@ -232,15 +331,21 @@ class LVNumber extends LVBase {
 			return undefined
 		}, "__concat", () => {
 			errors.concatenate(context.position, other.type)
-		})
+		}, other)
 	}
 
 	eq(context, other) {
-		return new LVBoolean(this.type === other.type && this.value === other.value)
+		const equal = new LVBoolean(this.type === other.type && this.value === other.value)
+		if (equal) {
+			return equal
+		}
+		else {
+			return super.eq(context, other)
+		}
 	}
 
 	lt(context, other) {
-		return this.overrideable(() => {
+		return this.overrideable(context, () => {
 			if (this.type === other.type) {
 				return new LVBoolean(this.value < other.value)
 			}
@@ -248,11 +353,11 @@ class LVNumber extends LVBase {
 			return undefined
 		}, "__lt", () => {
 			errors.compare(context.position, this.type, other.type)
-		})
+		}, other)
 	}
 	
 	le(context, other) {
-		return this.overrideable(() => {
+		return this.overrideable(context, () => {
 			if (this.type === other.type) {
 				return new LVBoolean(this.value <= other.value)
 			}
@@ -260,11 +365,18 @@ class LVNumber extends LVBase {
 			return undefined
 		}, "__le", () => {
 			errors.compare(context.position, this.type, other.type)
-		})
+		}, other)
 	}
 
 	unm(context) {
 		return new LVNumber(-this.value)
+	}
+
+	asNumber(context) {
+		return new LVNumber(this.value)
+	}
+	asString(context) {
+		return new LVString(String(this.value))
 	}
 
 	truthy(context) {
@@ -287,17 +399,8 @@ class LVString extends LVBase {
 		this.value = bytes
 	}
 
-	overrideable(operation, metaMethodName, notFoundOperation) {
-		const result = operation()
-		if (result !== undefined) {
-			return result
-		}
-
-		return notFoundOperation()
-	}
-
 	concat(context, other) {
-		return this.overrideable(() => {
+		return this.overrideable(context, () => {
 			let otherVal = other.value
 			if (other.type === "number") {
 				otherVal = String(otherVal)
@@ -310,7 +413,7 @@ class LVString extends LVBase {
 			return undefined
 		}, "__concat", () => {
 			errors.concatenate(context.position, other.type)
-		})
+		}, other)
 	}
 
 	eq(context, other) {
@@ -318,7 +421,7 @@ class LVString extends LVBase {
 	}
 
 	lt(context, other) {
-		return this.overrideable(() => {
+		return this.overrideable(context, () => {
 			if (this.type !== other.type) {
 				return undefined
 			}
@@ -340,11 +443,11 @@ class LVString extends LVBase {
 			return new LVBoolean(left.length < right.length)
 		}, "__lt", () => {
 			errors.compare(context.position, this.type, other.type)
-		})
+		}, other)
 	}
 	
 	le(context, other) {
-		return this.overrideable(() => {
+		return this.overrideable(context, () => {
 			if (this.type === other.type && this.value === other.value) {
 				return new LVBoolean(true)
 			}
@@ -370,11 +473,24 @@ class LVString extends LVBase {
 			return new LVBoolean(left.length < right.length)
 		}, "__le", () => {
 			errors.compare(context.position, this.type, other.type)
-		})
+		}, other)
 	}
 
 	len(context) {
 		return new LVNumber(this.value.length)
+	}
+
+	asNumber(context) {
+		const str = new TextDecoder("utf-8").decode(this.value)
+
+		if (isNaN(Number(str))) {
+			return new LVNil()
+		}
+
+		return new LVNumber(Number(str))
+	}
+	asString(context) {
+		return new LVString(this.value)
 	}
 
 	truthy(context) {
@@ -387,15 +503,6 @@ class LVBoolean extends LVBase {
 		super("boolean")
 
 		this.value = bool
-	}
-
-	overrideable(operation, metaMethodName, notFoundOperation) {
-		const result = operation()
-		if (result !== undefined) {
-			return result
-		}
-
-		return notFoundOperation()
 	}
 
 	eq(context, other) {
@@ -414,15 +521,6 @@ class LVNil extends LVBase {
 		this.value = null
 	}
 
-	overrideable(operation, metaMethodName, notFoundOperation) {
-		const result = operation()
-		if (result !== undefined) {
-			return result
-		}
-
-		return notFoundOperation()
-	}
-
 	eq(context, other) {
 		return new LVBoolean(this.type === other.type)
 	}
@@ -439,15 +537,6 @@ class LVTable extends LVBase {
 		this.array = []
 		this.hash = Object.create(null)
 		this.keyOrder = []
-	}
-
-	overrideable(operation, metaMethodName, notFoundOperation) {
-		const result = operation()
-		if (result !== undefined) {
-			return result
-		}
-
-		return notFoundOperation()
 	}
 
 	keys() {
@@ -507,15 +596,6 @@ class LVFunction extends LVBase {
 		this.value = func
 	}
 
-	overrideable(operation, metaMethodName, notFoundOperation) {
-		const result = operation()
-		if (result !== undefined) {
-			return result
-		}
-
-		return notFoundOperation()
-	}
-
 	truthy(context) {
 		return true
 	}
@@ -527,15 +607,6 @@ class LVClosure extends LVBase {
 
 		this.proto = proto
 		this.upvalues = new Array(proto.upValueCount)
-	}
-
-	overrideable(operation, metaMethodName, notFoundOperation) {
-		const result = operation()
-		if (result !== undefined) {
-			return result
-		}
-
-		return notFoundOperation()
 	}
 
 	truthy(context) {
@@ -616,6 +687,21 @@ function getMeta(context, obj, name) {
 	}
 
 	return obj.metatable.rawGet(context, name)
+}
+
+function call(context, value, ...args) {
+	if (typeof value === "function") {
+		return value(context, ...args)
+	}
+	else if (value instanceof LVFunction) {
+		return value.value(context, ...args)
+	}
+	else if (value instanceof LVClosure) {
+		return context.vm.runClosure(value, ...args)
+	}
+	else {
+		errors.call(context.position, value?.type ?? typeof value)
+	}
 }
 
 const LUA_SIGNATURE = [
@@ -785,6 +871,23 @@ class LuaVM {
 			const nextFn = this.globals.rawGet(context, "next")
 
 			return new LVTuple([nextFn, table, new LVNil()])
+		}))
+
+		this.globals.rawSet(null, "setmetatable", new LVFunction((context, table, metatable) => {
+			if (table.type !== "table") {
+				errors.badArgType(context.position, 1, "setmetatable", table.type, "table")
+			}
+
+			table.metatable = metatable
+
+			return table
+		}))
+		this.globals.rawSet(null, "getmetatable", new LVFunction((context, table) => {
+			if (table.type !== "table") {
+				errors.badArgType(context.position, 1, "getmetatable", table.type, "table")
+			}
+
+			return table.metatable
 		}))
 
 		this.mainProto = this.readPrototype()
@@ -1121,7 +1224,8 @@ class LuaVM {
 				line: proto.lineInfo[pc]
 			}
 			const context = {
-				position
+				position,
+				vm: this
 			}
 
 			switch (inst.name) {
@@ -1288,20 +1392,7 @@ class LuaVM {
 
 					const args = regs.slice(A + 1, A + 1 + argCount)
 
-					let result
-
-					if (typeof callee === "function") {
-						result = callee(...args)
-					}
-					else if (callee instanceof LVFunction) {
-						result = callee.value(context, ...args)
-					}
-					else if (callee instanceof LVClosure) {
-						result = this.runClosure(callee, ...args)
-					}
-					else {
-						errors.call(position, callee.type)
-					}
+					let result = call(context, callee, ...args)
 
 					const values = normalize(result)
 
@@ -1367,15 +1458,7 @@ class LuaVM {
 						upValue.close()
 					}
 
-					if (callee instanceof LVFunction) {
-						return callee.value(context, ...args)
-					}
-					else if (callee instanceof LVClosure) {
-						return this.runClosure(callee, ...args)
-					}
-					else {
-						errors.call(position, callee.type)
-					}
+					return call(context, callee, ...args)
 				}
 
 				case "ADD":
@@ -1527,14 +1610,7 @@ class LuaVM {
 					const state = regs[A + 1]
 					const ctrl = regs[A + 2]
 
-					let result
-					if (iter instanceof LVFunction) {
-						result = iter.value(context, state, ctrl)
-					} else if (iter instanceof LVClosure) {
-						result = this.runClosure(iter, state, ctrl)
-					} else {
-						errors.call(position, iter.type)
-					}
+					let result = call(context, iter, state, ctrl)
 
 					const values = normalize(result)
 
