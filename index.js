@@ -43,7 +43,7 @@ const errors = {
 		throw new LuaError(position, `attempt to call a ${type} value`)
 	},
 	badArgType: (position, index, funcName, type, expected) => {
-		throw new LuaError(position, `bad argument #${index} to \'${funcName}\' (${expected} expected, got ${type})`)
+		throw new LuaError(position, `bad argument #${index} to '${funcName}' (${expected} expected, got ${type})`)
 	}
 }
 
@@ -849,12 +849,20 @@ class LuaVM {
 
 			return wrap(context, Math.acos(value.value))
 		}))
-		mathLib.rawSet(null, "atan", new LVFunction((context, value) => {
-			if (value.type !== "number") {
-				errors.badArgType(context.position, 1, "atan", value.type, "number")
+		mathLib.rawSet(null, "atan", new LVFunction((context, y, x) => {
+			if (y.type !== "number") {
+				errors.badArgType(context.position, 1, "atan", y.type, "number")
 			}
 
-			return wrap(context, Math.atan(value.value))
+			if (x === undefined) {
+				return wrap(context, Math.atan(y.value))
+			}
+
+			if (x.type !== "number") {
+				errors.badArgType(context.position, 2, "atan", x.type, "number")
+			}
+
+			return wrap(context, Math.atan2(y.value, x.value))
 		}))
 
 		mathLib.rawSet(null, "floor", new LVFunction((context, value) => {
@@ -948,14 +956,17 @@ class LuaVM {
 				errors.badArgType(context.position, 1, "fmod", right.type, "number")
 			}
 
-			return wrap(context, Math.floor(left.value % right.value))
+			return wrap(context, left.value - Math.floor(left.value / right.value) * right.value)
 		}))
 		mathLib.rawSet(null, "modf", new LVFunction((context, value) => {
 			if (value.type !== "number") {
 				errors.badArgType(context.position, 1, "modf", value.type, "number")
 			}
 
-			return new LVTuple([wrap(context, Math.floor(value.value)), wrap(context, value.value - Math.floor(value.value))])
+			const int = value.value < 0 ? Math.ceil(value.value) : Math.floor(value.value)
+			const frac = value.value - int
+
+			return new LVTuple([wrap(context, int), wrap(context, frac)])
 		}))
 
 		mathLib.rawSet(null, "huge", wrap(null, Infinity))
@@ -964,15 +975,17 @@ class LuaVM {
 			if (value.type !== "number") {
 				errors.badArgType(context.position, 1, "log", value.type, "number")
 			}
+
+			if (base === undefined) {
+				return wrap(context, Math.log(value.value))
+			}
+
 			if (base.type !== "number") {
-				errors.badArgType(context.position, 1, "log", base.type, "number")
+				errors.badArgType(context.position, 2, "log", base.type, "number")
 			}
 
 			return wrap(context, Math.log(value.value) / Math.log(base.value))
 		}))
-
-		mathLib.rawSet(null, "maxinteger", wrap(null, Infinity))
-		mathLib.rawSet(null, "mininteger", wrap(null, -Infinity))
 
 		mathLib.rawSet(null, "pi", wrap(null, Math.PI))
 
@@ -995,6 +1008,10 @@ class LuaVM {
 				throw new LuaError(context.position, "bad argument #2 to 'random' (number has no integer representation)")
 			}
 
+			if (min.value > max.value) {
+				throw new LuaError(context.position, "bad argument #2 to 'random' (interval is empty)")
+			}
+
 			return wrap(context, Math.floor(Math.random() * (max.value - min.value + 1)) + min.value)
 		}))
 
@@ -1004,53 +1021,6 @@ class LuaVM {
 			}
 
 			return wrap(context, Math.sqrt(value.value))
-		}))
-
-		mathLib.rawSet(null, "tointeger", new LVFunction((context, value) => {
-			if (value.type !== "number") {
-				errors.badArgType(context.position, 1, "tointeger", value.type, "number")
-			}
-
-			if (!Number.isInteger(value.value)) {
-				return new LVNil()
-			}
-
-			return value
-		}))
-
-		mathLib.rawSet(null, "type", new LVFunction((context, value) => {
-			if (value.type !== "number") {
-				return new LVNil()
-			}
-
-			if (isNaN(value.value)) {
-				return wrap(context, "float")
-			}
-
-			if (!Number.isInteger(value.value)) {
-				return wrap(context, "float")
-			}
-
-			return wrap(context, "integer")
-		}))
-
-		mathLib.rawSet(null, "ult", new LVFunction((context, left, right) => {
-			if (left.type !== "number") {
-				errors.badArgType(context.position, 1, "ult", left.type, "number")
-			}
-			if (right.type !== "number") {
-				errors.badArgType(context.position, 2, "ult", right.type, "number")
-			}
-
-			if (!Number.isInteger(left.value)) {
-				throw new LuaError(context.position, "bad argument #1 to 'ult' (number has no integer representation)")
-			}
-			if (!Number.isInteger(right.value)) {
-				throw new LuaError(context.position, "bad argument #2 to 'ult' (number has no integer representation)")
-			}
-
-			// TODO: do UNSIGNED comparison
-			return wrap(context, left.value < right.value)
 		}))
 
 		this.globals.rawSet(null, "math", mathLib)
@@ -1070,7 +1040,7 @@ class LuaVM {
 			if (lastKey.type !== "nil") {
 				start = keys.findIndex((key) => key == unwrap(lastKey))
 				if (start === -1) {
-					throw new LuaError(context.position, `invalid key to \'next\'`)
+					throw new LuaError(context.position, `invalid key to 'next'`)
 				}
 
 				start ++
@@ -1096,7 +1066,7 @@ class LuaVM {
 			}
 			const value = unwrap(index)
 			if (!Number.isInteger(value)) {
-				throw new LuaError(context.position, `bad argument #1 to \'select\' (number has no integer representation)`)
+				throw new LuaError(context.position, `bad argument #1 to 'select' (number has no integer representation)`)
 			}
 
 			if (value > args.length) {
@@ -1107,7 +1077,7 @@ class LuaVM {
 			}
 
 			if (value <= 0) {
-				throw new LuaError(context.position, `bad argument #1 to \'select\' (index out of range)`)
+				throw new LuaError(context.position, `bad argument #1 to 'select' (index out of range)`)
 			}
 
 			return new LVTuple(args.slice(value - 1))
