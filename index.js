@@ -1025,8 +1025,66 @@ class LuaVM {
 
 		this.globals.rawSet(null, "math", mathLib)
 
+		const stringLib = new LVTable()
+
+		stringLib.rawSet(null, "sub", new LVFunction((context, str, start, end) => {
+			let trueStr = str
+			if (str.type === "number") {
+				trueStr = str.asString(context)
+			}
+			if (trueStr.type !== "string") {
+				errors.badArgType(context.position, 1, "sub", str.type, "string")
+			}
+
+			let trueStart = start
+			if (start.type === "string") {
+				trueStart = start.asNumber(context)
+			}
+			if (trueStart.type !== "number") {
+				errors.badArgType(context.position, 2, "sub", start.type, "string")
+			}
+
+			let trueEnd = end
+			if (start.type === "string") {
+				trueEnd = end.asNumber(context)
+			}
+			if (trueEnd.type !== "number") {
+				errors.badArgType(context.position, 3, "sub", end.type, "string")
+			}
+
+			if (trueStart.value < 0) {
+				trueStart = trueStart.value + trueStr.value.length + 2
+			}
+			else {
+				trueStart = trueStart.value
+			}
+			if (trueEnd.value < 0) {
+				trueEnd = trueEnd.value + trueStr.value.length + 2
+			}
+			else {
+				trueEnd = trueEnd.value
+			}
+
+			return new LVString(trueStr.value.slice(trueStart - 1, trueEnd))
+		}))
+
+		stringLib.rawSet(null, "len", new LVFunction((context, str) => {
+			let trueStr = str
+			if (str.type === "number") {
+				trueStr = str.asString(context)
+			}
+			if (trueStr.type !== "string") {
+				errors.badArgType(context.position, 1, "sub", str.type, "string")
+			}
+
+			return wrap(context, trueStr.value.length)
+		}))
+
+		this.globals.rawSet(null, "string", stringLib)
+
 		this.globals.rawSet(null, "print", new LVFunction((context, ...msgs) => {
-			console.log(...(msgs.map((msg) => msg.print(context))))
+			const text = (msgs.map((msg) => msg.print(context))).join("\t")
+			console.log(text)
 		}))
 
 		this.globals.rawSet(null, "next", new LVFunction((context, table, lastKey) => {
