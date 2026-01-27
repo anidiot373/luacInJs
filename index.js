@@ -1045,7 +1045,7 @@ class LuaVM {
 			}
 
 			let trueEnd = end
-			if (start.type === "string") {
+			if (end.type === "string") {
 				trueEnd = end.asNumber(context)
 			}
 			if (trueEnd.type !== "number") {
