@@ -903,6 +903,10 @@ class LuaVM {
 		}))
 
 		mathLib.rawSet(null, "min", new LVFunction((context, first, ...rest) => {
+			if (first === undefined) {
+				throw new LuaError(context.position, "bad argument #1 to 'min' (number expected, got no value)")
+			}
+
 			let best = first
 
 			for (const val of rest) {
@@ -914,6 +918,10 @@ class LuaVM {
 			return best
 		}))
 		mathLib.rawSet(null, "max", new LVFunction((context, first, ...rest) => {
+			if (first === undefined) {
+				throw new LuaError(context.position, "bad argument #1 to 'max' (number expected, got no value)")
+			}
+
 			let best = first
 
 			for (const val of rest) {
@@ -953,7 +961,7 @@ class LuaVM {
 				errors.badArgType(context.position, 1, "fmod", left.type, "number")
 			}
 			if (right.type !== "number") {
-				errors.badArgType(context.position, 1, "fmod", right.type, "number")
+				errors.badArgType(context.position, 2, "fmod", right.type, "number")
 			}
 
 			return wrap(context, left.value - Math.floor(left.value / right.value) * right.value)
@@ -994,11 +1002,22 @@ class LuaVM {
 				return wrap(context, Math.random())
 			}
 			else if (max === undefined) {
+				if (min.type !== "number") {
+					errors.badArgType(context.position, 1, "random", min.type, "number")
+				}
+
 				if (!Number.isInteger(min.value)) {
 					throw new LuaError(context.position, "bad argument #1 to 'random' (number has no integer representation)")
 				}
 
 				return wrap(context, Math.floor(Math.random() * min.value) + 1)
+			}
+
+			if (min.type !== "number") {
+				errors.badArgType(context.position, 1, "random", min.type, "number")
+			}
+			if (max.type !== "number") {
+				errors.badArgType(context.position, 2, "random", max.type, "number")
 			}
 
 			if (!Number.isInteger(min.value)) {
@@ -1053,13 +1072,13 @@ class LuaVM {
 			}
 
 			if (trueStart.value < 0) {
-				trueStart = trueStart.value + trueStr.value.length + 2
+				trueStart = trueStart.value + trueStr.value.length + 1
 			}
 			else {
 				trueStart = trueStart.value
 			}
 			if (trueEnd.value < 0) {
-				trueEnd = trueEnd.value + trueStr.value.length + 2
+				trueEnd = trueEnd.value + trueStr.value.length + 1
 			}
 			else {
 				trueEnd = trueEnd.value
@@ -1074,7 +1093,7 @@ class LuaVM {
 				trueStr = str.asString(context)
 			}
 			if (trueStr.type !== "string") {
-				errors.badArgType(context.position, 1, "sub", str.type, "string")
+				errors.badArgType(context.position, 1, "len", str.type, "string")
 			}
 
 			return wrap(context, trueStr.value.length)
@@ -1095,7 +1114,7 @@ class LuaVM {
 			const keys = table.keys()
 			let start = 0
 
-			if (lastKey.type !== "nil") {
+			if (!lastKey || lastKey.type !== "nil") {
 				start = keys.findIndex((key) => key == unwrap(lastKey))
 				if (start === -1) {
 					throw new LuaError(context.position, `invalid key to 'next'`)
@@ -1111,7 +1130,7 @@ class LuaVM {
 			const key = keys[start]
 			const val = table.rawGet(context, key)
 
-			return new LVTuple([wrap(key), val])
+			return new LVTuple([wrap(context, key), val])
 		}))
 
 		this.globals.rawSet(null, "select", new LVFunction((context, index, ...args) => {
@@ -1130,11 +1149,13 @@ class LuaVM {
 			if (value > args.length) {
 				return new LVTuple([])
 			}
+
+			let i = value
 			if (i < 0) {
 				i = args.length + i + 1
 			}
 
-			if (value <= 0) {
+			if (i <= 0 || i > args.length) {
 				throw new LuaError(context.position, `bad argument #1 to 'select' (index out of range)`)
 			}
 
