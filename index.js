@@ -1749,7 +1749,25 @@ class LuaVM {
 						upValue.close()
 					}
 
-					return call(context, callee, ...args)
+					const result = call(context, callee, ...args)
+					const values = normalize(context, result)
+
+					if (C === 0) {
+						return new LVTuple(values)
+					}
+					else if (C === 1) {
+						return new LVTuple([])
+					}
+
+					const returnCount = C - 1
+
+					if (returnCount === 1) {
+						return values[0] ?? new LVNil()
+					}
+
+					const sliced = values.slice(0, returnCount).map((returned) => returned ?? new LVNil())
+
+					return new LVTuple(sliced)
 				}
 
 				case "ADD":
@@ -1811,7 +1829,7 @@ class LuaVM {
 
 				case "JMP": {
 					for (const upValue of openUpValues) {
-						if (upValue.isOpen && upValue.index >= A - 1) {
+						if (upValue.isOpen && upValue.index >= A) {
 							upValue.close()
 						}
 					}
@@ -1828,7 +1846,9 @@ class LuaVM {
 					if (cond !== (C !== 0)) {
 						pc ++
 					} else {
-						setReg(A, val)
+						if (inst.name === "TESTSET") {
+							setReg(A, val)
+						}
 					}
 					break
 				}
@@ -1851,13 +1871,6 @@ class LuaVM {
 				}
 
 				case "FORPREP": {
-					setReg(A, regs[A].sub(context, regs[A + 2]))
-
-					pc += sBx
-					break
-				}
-
-				case "FORLOOP": {
 					const counter = regs[A]
 					const limit = regs[A + 1]
 					const step = regs[A + 2]
@@ -1871,6 +1884,17 @@ class LuaVM {
 					if (step.type !== "number") {
 						errors.forStep(position)
 					}
+
+					setReg(A, regs[A].sub(context, regs[A + 2]))
+
+					pc += sBx
+					break
+				}
+
+				case "FORLOOP": {
+					const counter = regs[A]
+					const limit = regs[A + 1]
+					const step = regs[A + 2]
 
 					const newCounter = counter.add(context, step)
 					setReg(A, newCounter)
@@ -1924,11 +1948,18 @@ class LuaVM {
 				case "VARARG": {
 					const varArgCount = args.length - proto.paramCount
 
+					if (!proto.isVarArg) {
+						if (B === 0) { top = A }
+						break
+					}
+
 					if (B === 0) {
 						for (let i = 0; i < varArgCount; i ++) {
 							setReg(A + i, args[proto.paramCount + i])
 						}
-					} else {
+						top = A + varArgCount
+					}
+					else {
 						const nToCopy = B - 1
 
 						const copyCount = Math.min(nToCopy, varArgCount)
