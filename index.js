@@ -1155,7 +1155,24 @@ class LuaVM {
 
 			coroutine.status = "running"
 
-			const result = this.runCoroutine(coroutine, ...args)
+			if (coroutine.pc === 0) {
+				coroutine.args = args
+
+				const proto = coroutine.closure.proto
+				for (let i = 0; i < proto.paramCount; i ++) {
+					coroutine.regs[i] = args[i] ?? new LVNil()
+				}
+
+				coroutine.top = proto.paramCount
+			}
+			else {
+				for (let i = 0; i < args.length; i ++) {
+					coroutine.regs[i] = args[i]
+				}
+				coroutine.top = args.length
+			}
+
+			const result = this.runCoroutine(coroutine)
 
 			if (coroutine.status === "suspended") {
 				return new LVTuple([wrap(context, true), ...result.values])
@@ -1799,8 +1816,11 @@ class LuaVM {
 							upValue.close()
 						}
 
+						coroutine.status = "dead"
+
 						if (B === 0) {
 							const values = coroutine.regs.slice(A, coroutine.top)
+
 							return new LVTuple(values)
 						}
 						else if (B === 1) {
@@ -1836,6 +1856,8 @@ class LuaVM {
 
 						const result = call(context, callee, ...args)
 						const values = normalize(context, result)
+
+						coroutine.status = "dead"
 
 						if (C === 0) {
 							return new LVTuple(values)
