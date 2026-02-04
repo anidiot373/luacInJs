@@ -635,6 +635,32 @@ class LVClosure extends LVBase {
 	}
 }
 
+class LVCoroutine extends LVBase {
+	constructor(closure, args) {
+		super("thread")
+
+		this.closure = closure
+		this.status = "suspended"
+
+		this.args = args ?? []
+
+		this.pc = 0
+		this.top = 0
+		this.regs = Array.from({ length: closure.proto.maxStackSize }, () => new LVNil())
+		this.openUpValues = []
+
+		for (let i = 0; i < closure.proto.paramCount; i ++) {
+			this.regs[i] = args[i] ?? new LVNil()
+		}
+	}
+}
+
+class LuaYield {
+	constructor(values) {
+		this.values = values
+	}
+}
+
 class LVUpValue {
     constructor(parentRegs, index) {
         this.isOpen = true
@@ -733,7 +759,10 @@ function call(context, value, ...args) {
 		return value.value(context, ...args)
 	}
 	else if (value instanceof LVClosure) {
-		return context.vm.runClosure(value, ...args)
+		return context.vm.runCoroutine(new LVCoroutine(value, ...args))
+	}
+	else if (value instanceof LVCoroutine) {
+		return context.vm.runCoroutine(value)
 	}
 	else {
 		if (value instanceof LVBase) {
@@ -1101,6 +1130,50 @@ class LuaVM {
 
 		this.globals.rawSet(null, "string", stringLib)
 
+		const coroutineLib = new LVTable()
+
+		const normalize = (context, result) => {
+			if (result instanceof LVTuple) {
+				return result.values
+			}
+
+			return [wrap(context, result)]
+		}
+
+		coroutineLib.rawSet(null, "yield", new LVFunction((context, ...values) => {
+			throw new LuaYield(values)
+		}))
+
+		coroutineLib.rawSet(null, "resume", new LVFunction((context, coroutine, ...args) => {
+			if (!(coroutine instanceof LVCoroutine)) {
+				errors.badArgType(context.position, 1, "resume", co.type, "coroutine")
+			}
+
+			if (coroutine.status === "dead") {
+				return new LVTuple([wrap(context, false), wrap(context, "cannot resume dead coroutine")])
+			}
+
+			coroutine.status = "running"
+
+			const result = this.runCoroutine(coroutine, ...args)
+
+			if (coroutine.status === "suspended") {
+				return new LVTuple([wrap(context, true), ...result.values])
+			}
+
+			coroutine.status = "dead"
+			return new LVTuple([wrap(context, true), ...normalize(context, result)])
+		}))
+
+		coroutineLib.rawSet(null, "create", new LVFunction((context, func) => {
+			if (func.type !== "function") {
+				errors.badArgType(context.position, 1, "create", func.type, "function")
+			}
+			return new LVCoroutine(func, [])
+		}))
+
+		this.globals.rawSet(null, "coroutine", coroutineLib)
+
 		this.globals.rawSet(null, "print", new LVFunction((context, ...msgs) => {
 			const text = (msgs.map((msg) => msg.print(context))).join("\t")
 			console.log(text)
@@ -1450,24 +1523,14 @@ class LuaVM {
 		}
 	}
 
-	runClosure(closure, ...args) {
-		const proto = closure.proto
-
-		let openUpValues = []
-
-		let pc = 0
-		let top = 0
-		let regs = Array.from({ length: proto.maxStackSize }, () => new LVNil())
-
-		for (let i = 0; i < proto.paramCount; i ++) {
-			regs[i] = args[i]
-		}
+	runCoroutine(coroutine) {
+		const proto = coroutine.closure.proto
 
 		const setReg = (i, v) => {
-			regs[i] = v
+			coroutine.regs[i] = v
 			
-			if (i >= top) {
-				top = i + 1
+			if (i >= coroutine.top) {
+				coroutine.top = i + 1
 			}
 		}
 
@@ -1512,7 +1575,7 @@ class LuaVM {
 				}
 			}
 			
-			const upValue = new LVUpValue(regs, regIndex)
+			const upValue = new LVUpValue(coroutine.regs, regIndex)
 			openUpValues.push(upValue)
 			
 			return upValue
@@ -1526,485 +1589,494 @@ class LuaVM {
 			return value
 		}
 
-		while (pc >= 0 && pc < proto.insts.length) {
-			const inst = this.decodeInst(proto.insts[pc ++])
+		try {
+			while (coroutine.pc >= 0 && coroutine.pc < proto.insts.length) {
+				const inst = this.decodeInst(proto.insts[coroutine.pc ++])
 
-			const { A, B, C, Bx, sBx } = inst
+				const { A, B, C, Bx, sBx } = inst
 
-			const position = {
-				fileName: proto.fileName,
-				line: proto.lineInfo[pc]
-			}
-			const context = {
-				position,
-				vm: this
-			}
-
-			switch (inst.name) {
-				case "MOVE": {
-					setReg(A, regs[B])
-					break
+				const position = {
+					fileName: proto.fileName,
+					line: proto.lineInfo[coroutine.pc]
+				}
+				const context = {
+					position,
+					vm: this
 				}
 
-				case "LOADK": {
-					setReg(A, proto.constants[Bx])
-					break
-				}
-
-				case "LOADBOOL": {
-					setReg(A, new LVBoolean(B !== 0))
-
-					if (C !== 0) {
-						pc ++
-					}
-					break
-				}
-
-				case "LOADNIL": {
-					for (let i = A; i <= B; i ++) {
-						setReg(i, new LVNil())
-					}
-					break
-				}
-
-				case "GETGLOBAL": {
-					const key = proto.constants[Bx]
-					const val = this.globals.rawGet(context, key)
-					
-					setReg(A, val)
-					break
-				}
-
-				case "SETGLOBAL": {
-					const key = proto.constants[Bx]
-
-					this.globals.rawSet(context, key, regs[A])
-					break
-				}
-
-				case "NEWTABLE": {
-					const arrSize = floatingByteToInt(B)
-					// const hashSize = floatingByteToInt(C)
-
-					const tbl = new LVTable()
-
-					tbl.array.length = arrSize
-
-					setReg(A, tbl)
-					break
-				}
-
-				case "GETTABLE": {
-					const table = regs[B]
-					const key = RK(regs, proto, C)
-
-					setReg(A, table.rawGet(context, key))
-					break
-				}
-
-				case "SETTABLE": {
-					const table = regs[A]
-					
-					const key = RK(regs, proto, B)
-					const val = RK(regs, proto, C)
-					
-					table.rawSet(context, key, val)
-					break
-				}
-
-				case "SELF": {
-					const table = regs[B]
-					const key = RK(regs, proto, C)
-
-					setReg(A + 1, table)
-
-					setReg(A, table.rawGet(context, key))
-					break
-				}
-
-				case "SETLIST": {
-					let count = B
-					let extra = C
-
-					if (extra === 0) {
-						extra = proto.insts[pc ++]
-					}
-
-					if (count === 0) {
-						count = top - (A + 1)
-					}
-
-					const table = regs[A]
-					const offset = (extra - 1) * LFIELDS_PER_FLUSH
-
-					for (let i = 1; i <= count; i ++) {
-						const val = regs[A + i]
-						table.rawSet(context, offset + i, val)
-					}
-
-					break
-				}
-
-				case "CLOSURE": {
-					const newProto = proto.nestedProtos[Bx]
-					const newClosure = new LVClosure(newProto)
-
-					for (let i = 0; i < newProto.upValueCount; i ++) {
-						const upValueInst = this.decodeInst(proto.insts[pc ++])
-
-						switch (upValueInst.name) {
-							case "MOVE":
-								newClosure.upvalues[i] = findOrCreateUpValue(upValueInst.B)
-								break
-							case "GETUPVAL":
-								newClosure.upvalues[i] = closure.upvalues[upValueInst.B]
-								break
-							default:
-								throw new LuaError(position, `invalid upvalue binding instruction: ${upValueInst.name}`)
-						}
-					}
-
-					setReg(A, newClosure)
-					break
-				}
-
-				case "GETUPVAL": {
-					const upValue = closure.upvalues[B]
-
-					setReg(A, upValue.get())
-					break
-				}
-				
-				case "SETUPVAL": {
-					const upValue = closure.upvalues[B]
-					
-					upValue.set(regs[A])
-					break
-				}
-
-				case "CLOSE": {
-					for (const upValue of openUpValues) {
-						if (upValue.isOpen && upValue.index >= A) {
-							upValue.close()
-						}
-					}
-					break
-				}
-
-				case "CALL": {
-					const callee = regs[A]
-
-					let argCount
-					if (B === 0) {
-						argCount = top - (A + 1)
-					}
-					else {
-						argCount = B - 1
-					}
-
-					const args = regs.slice(A + 1, A + 1 + argCount)
-
-					let result = call(context, callee, ...args)
-
-					const values = normalize(context, result)
-
-					if (C === 0) {
-						for (let i = 0; i < values.length; i ++) {
-							setReg(A + i, values[i])
-						}
-						top = A + values.length
-
-						break
-					}
-					else if (C === 1) {
+				switch (inst.name) {
+					case "MOVE": {
+						setReg(A, coroutine.regs[B])
 						break
 					}
 
-					const returnCount = C - 1
-
-					for (let i = 0; i < returnCount; i ++) {
-						setReg(A + i, values[i] ?? new LVNil())
+					case "LOADK": {
+						setReg(A, proto.constants[Bx])
+						break
 					}
 
-					top = A + returnCount
-					break
-				}
+					case "LOADBOOL": {
+						setReg(A, new LVBoolean(B !== 0))
 
-				case "RETURN": {
-					for (const upValue of openUpValues) {
-						upValue.close()
+						if (C !== 0) {
+							pc ++
+						}
+						break
 					}
 
-					if (B === 0) {
-						const values = regs.slice(A, top)
-						return new LVTuple(values)
-					}
-					else if (B === 1) {
-						return new LVTuple([])
-					}
-
-					const returnCount = B - 1
-
-					if (returnCount === 1) {
-						return regs[A]
+					case "LOADNIL": {
+						for (let i = A; i <= B; i ++) {
+							setReg(i, new LVNil())
+						}
+						break
 					}
 
-					const values = regs.slice(A, A + returnCount)
-
-					return new LVTuple(values)
-				}
-
-				case "TAILCALL": {
-					const callee = regs[A]
-
-					let argCount
-					if (B === 0) {
-						argCount = top - (A + 1)
-					} else {
-						argCount = B - 1
-					}
-
-					const args = regs.slice(A + 1, A + 1 + argCount)
-
-					for (const upValue of openUpValues) {
-						upValue.close()
-					}
-
-					const result = call(context, callee, ...args)
-					const values = normalize(context, result)
-
-					if (C === 0) {
-						return new LVTuple(values)
-					}
-					else if (C === 1) {
-						return new LVTuple([])
-					}
-
-					const returnCount = C - 1
-
-					if (returnCount === 1) {
-						return values[0] ?? new LVNil()
-					}
-
-					const sliced = values.slice(0, returnCount).map((returned) => returned ?? new LVNil())
-
-					return new LVTuple(sliced)
-				}
-
-				case "ADD":
-				case "SUB":
-				case "MUL":
-				case "DIV":
-				case "MOD":
-				case "POW": {
-					const left = first(RK(regs, proto, B))
-					const right = first(RK(regs, proto, C))
-
-					let result
-
-					switch (inst.name) {
-						case "ADD": result = left.add(context, right); break
-						case "SUB": result = left.sub(context, right); break
-						case "MUL": result = left.mul(context, right); break
-						case "DIV": result = left.div(context, right); break
-						case "MOD": result = left.mod(context, right); break
-						case "POW": result = left.pow(context, right); break
-					}
-
-					setReg(A, result)
-					break
-				}
-
-				case "CONCAT": {
-					let result = first(RK(regs, proto, B))
-
-					for (let i = B + 1; i <= C; i ++) {
-						const next = first(RK(regs, proto, i))
+					case "GETGLOBAL": {
+						const key = proto.constants[Bx]
+						const val = this.globals.rawGet(context, key)
 						
-						result = result.concat(context, next)
+						setReg(A, val)
+						break
 					}
 
-					setReg(A, result)
-					break
-				}
+					case "SETGLOBAL": {
+						const key = proto.constants[Bx]
 
-				case "EQ":
-				case "LT":
-				case "LE": {
-					const left = first(RK(regs, proto, B))
-					const right = first(RK(regs, proto, C))
-
-					let result
-
-					switch (inst.name) {
-						case "EQ": result = left.eq(context, right); break
-						case "LT": result = left.lt(context, right); break
-						case "LE": result = left.le(context, right); break
+						this.globals.rawSet(context, key, coroutine.regs[A])
+						break
 					}
 
-					if (result.truthy() !== (A !== 0)) {
-						pc ++
-					}
-					break
-				}
+					case "NEWTABLE": {
+						const arrSize = floatingByteToInt(B)
+						// const hashSize = floatingByteToInt(C)
 
-				case "JMP": {
-					for (const upValue of openUpValues) {
-						if (upValue.isOpen && upValue.index >= A) {
+						const tbl = new LVTable()
+
+						tbl.array.length = arrSize
+
+						setReg(A, tbl)
+						break
+					}
+
+					case "GETTABLE": {
+						const table = coroutine.regs[B]
+						const key = RK(coroutine.regs, proto, C)
+
+						setReg(A, table.rawGet(context, key))
+						break
+					}
+
+					case "SETTABLE": {
+						const table = coroutine.regs[A]
+						
+						const key = RK(coroutine.regs, proto, B)
+						const val = RK(coroutine.regs, proto, C)
+						
+						table.rawSet(context, key, val)
+						break
+					}
+
+					case "SELF": {
+						const table = coroutine.regs[B]
+						const key = RK(coroutine.regs, proto, C)
+
+						setReg(A + 1, table)
+
+						setReg(A, table.rawGet(context, key))
+						break
+					}
+
+					case "SETLIST": {
+						let count = B
+						let extra = C
+
+						if (extra === 0) {
+							extra = proto.insts[coroutine.pc ++]
+						}
+
+						if (count === 0) {
+							count = coroutine.top - (A + 1)
+						}
+
+						const table = coroutine.regs[A]
+						const offset = (extra - 1) * LFIELDS_PER_FLUSH
+
+						for (let i = 1; i <= count; i ++) {
+							const val = coroutine.regs[A + i]
+							table.rawSet(context, offset + i, val)
+						}
+
+						break
+					}
+
+					case "CLOSURE": {
+						const newProto = proto.nestedProtos[Bx]
+						const newClosure = new LVClosure(newProto)
+
+						for (let i = 0; i < newProto.upValueCount; i ++) {
+							const upValueInst = this.decodeInst(proto.insts[pc ++])
+
+							switch (upValueInst.name) {
+								case "MOVE":
+									newClosure.upvalues[i] = findOrCreateUpValue(upValueInst.B)
+									break
+								case "GETUPVAL":
+									newClosure.upvalues[i] = coroutine.closure.upvalues[upValueInst.B]
+									break
+								default:
+									throw new LuaError(position, `invalid upvalue binding instruction: ${upValueInst.name}`)
+							}
+						}
+
+						setReg(A, newClosure)
+						break
+					}
+
+					case "GETUPVAL": {
+						const upValue = coroutine.closure.upvalues[B]
+
+						setReg(A, upValue.get())
+						break
+					}
+					
+					case "SETUPVAL": {
+						const upValue = coroutine.closure.upvalues[B]
+						
+						upValue.set(regs[A])
+						break
+					}
+
+					case "CLOSE": {
+						for (const upValue of coroutine.openUpValues) {
+							if (upValue.isOpen && upValue.index >= A) {
+								upValue.close()
+							}
+						}
+						break
+					}
+
+					case "CALL": {
+						const callee = coroutine.regs[A]
+
+						let argCount
+						if (B === 0) {
+							argCount = coroutine.top - (A + 1)
+						}
+						else {
+							argCount = B - 1
+						}
+
+						const args = coroutine.regs.slice(A + 1, A + 1 + argCount)
+
+						let result = call(context, callee, ...args)
+
+						const values = normalize(context, result)
+
+						if (C === 0) {
+							for (let i = 0; i < values.length; i ++) {
+								setReg(A + i, values[i])
+							}
+							coroutine.top = A + values.length
+
+							break
+						}
+						else if (C === 1) {
+							break
+						}
+
+						const returnCount = C - 1
+
+						for (let i = 0; i < returnCount; i ++) {
+							setReg(A + i, values[i] ?? new LVNil())
+						}
+
+						coroutine.top = A + returnCount
+						break
+					}
+
+					case "RETURN": {
+						for (const upValue of coroutine.openUpValues) {
 							upValue.close()
 						}
-					}
 
-					pc += sBx
-					break
-				}
-
-				case "TEST":
-				case "TESTSET": {
-					const val = regs[B]
-					const cond = val.truthy(context)
-
-					if (cond !== (C !== 0)) {
-						pc ++
-					} else {
-						if (inst.name === "TESTSET") {
-							setReg(A, val)
+						if (B === 0) {
+							const values = coroutine.regs.slice(A, coroutine.top)
+							return new LVTuple(values)
 						}
-					}
-					break
-				}
-
-				case "UNM":
-				case "NOT":
-				case "LEN": {
-					const value = RK(regs, proto, B)
-
-					let result
-
-					switch (inst.name) {
-						case "UNM": result = value.unm(context); break
-						case "NOT": result = value.not(context); break
-						case "LEN": result = value.len(context); break
-					}
-
-					setReg(A, result)
-					break
-				}
-
-				case "FORPREP": {
-					const counter = regs[A]
-					const limit = regs[A + 1]
-					const step = regs[A + 2]
-
-					if (counter.type !== "number") {
-						errors.forInit(position)
-					}
-					if (limit.type !== "number") {
-						errors.forLimit(position)
-					}
-					if (step.type !== "number") {
-						errors.forStep(position)
-					}
-
-					setReg(A, regs[A].sub(context, regs[A + 2]))
-
-					pc += sBx
-					break
-				}
-
-				case "FORLOOP": {
-					const counter = regs[A]
-					const limit = regs[A + 1]
-					const step = regs[A + 2]
-
-					const newCounter = counter.add(context, step)
-					setReg(A, newCounter)
-
-					let continueLoop = false
-
-					if (step.le(context, wrap(context, 0)).truthy()) {
-						if (limit.le(context, newCounter).truthy()) {
-							continueLoop = true
+						else if (B === 1) {
+							return new LVTuple([])
 						}
-					}
-					else {
-						if (newCounter.le(context, limit).truthy()) {
-							continueLoop = true
+
+						const returnCount = B - 1
+
+						if (returnCount === 1) {
+							return coroutine.regs[A]
 						}
+
+						const values = regs.slice(A, A + returnCount)
+
+						return new LVTuple(values)
 					}
 
-					if (continueLoop) {
-						setReg(A + 3, regs[A])
+					case "TAILCALL": {
+						const callee = coroutine.regs[A]
 
-						pc += sBx
+						let argCount
+						if (B === 0) {
+							argCount = coroutine.top - (A + 1)
+						} else {
+							argCount = B - 1
+						}
+
+						const args = coroutine.regs.slice(A + 1, A + 1 + argCount)
+
+						for (const upValue of coroutine.openUpValues) {
+							upValue.close()
+						}
+
+						const result = call(context, callee, ...args)
+						const values = normalize(context, result)
+
+						if (C === 0) {
+							return new LVTuple(values)
+						}
+						else if (C === 1) {
+							return new LVTuple([])
+						}
+
+						const returnCount = C - 1
+
+						if (returnCount === 1) {
+							return values[0] ?? new LVNil()
+						}
+
+						const sliced = values.slice(0, returnCount).map((returned) => returned ?? new LVNil())
+
+						return new LVTuple(sliced)
 					}
-					break
-				}
 
-				case "TFORLOOP": {
-					const iter = regs[A]
-					const state = regs[A + 1]
-					const ctrl = regs[A + 2]
+					case "ADD":
+					case "SUB":
+					case "MUL":
+					case "DIV":
+					case "MOD":
+					case "POW": {
+						const left = first(RK(coroutine.regs, proto, B))
+						const right = first(RK(coroutine.regs, proto, C))
 
-					let result = call(context, iter, state, ctrl)
+						let result
 
-					const values = normalize(context, result)
+						switch (inst.name) {
+							case "ADD": result = left.add(context, right); break
+							case "SUB": result = left.sub(context, right); break
+							case "MUL": result = left.mul(context, right); break
+							case "DIV": result = left.div(context, right); break
+							case "MOD": result = left.mod(context, right); break
+							case "POW": result = left.pow(context, right); break
+						}
 
-					const newCtrl = values[0] ?? new LVNil()
-
-					if (newCtrl.type === "nil") {
-						pc += Bx - 1
+						setReg(A, result)
 						break
 					}
 
-					setReg(A + 2, newCtrl)
+					case "CONCAT": {
+						let result = first(RK(coroutine.regs, proto, B))
 
-					for (let i = 0; i < values.length; i ++) {
-						setReg(A + 3 + i, values[i])
-					}
+						for (let i = B + 1; i <= C; i ++) {
+							const next = first(RK(coroutine.regs, proto, i))
+							
+							result = result.concat(context, next)
+						}
 
-					break
-				}
-
-				case "VARARG": {
-					const varArgCount = args.length - proto.paramCount
-
-					if (!proto.isVarArg) {
-						if (B === 0) { top = A }
+						setReg(A, result)
 						break
 					}
 
-					if (B === 0) {
-						for (let i = 0; i < varArgCount; i ++) {
-							setReg(A + i, args[proto.paramCount + i])
+					case "EQ":
+					case "LT":
+					case "LE": {
+						const left = first(RK(coroutine.regs, proto, B))
+						const right = first(RK(coroutine.regs, proto, C))
+
+						let result
+
+						switch (inst.name) {
+							case "EQ": result = left.eq(context, right); break
+							case "LT": result = left.lt(context, right); break
+							case "LE": result = left.le(context, right); break
 						}
-						top = A + varArgCount
+
+						if (result.truthy() !== (A !== 0)) {
+							coroutine.pc ++
+						}
+						break
 					}
-					else {
-						const nToCopy = B - 1
 
-						const copyCount = Math.min(nToCopy, varArgCount)
-						for (let i = 0; i < copyCount; i ++) {
-							setReg(A + i, args[proto.paramCount + i])
+					case "JMP": {
+						for (const upValue of coroutine.openUpValues) {
+							if (upValue.isOpen && upValue.index >= A) {
+								upValue.close()
+							}
 						}
 
-						for (let i = copyCount; i < nToCopy; i ++) {
-							setReg(A + i, new LVNil())
-						}
+						coroutine.pc += sBx
+						break
 					}
 
-					break
-				}
+					case "TEST":
+					case "TESTSET": {
+						const val = coroutine.regs[B]
+						const cond = val.truthy(context)
 
-				default: {
-					throw new LuaCFormatError(`invalid opcode ${inst.name}`)
+						if (cond !== (C !== 0)) {
+							coroutine.pc ++
+						} else {
+							if (inst.name === "TESTSET") {
+								setReg(A, val)
+							}
+						}
+						break
+					}
+
+					case "UNM":
+					case "NOT":
+					case "LEN": {
+						const value = RK(coroutine.regs, proto, B)
+
+						let result
+
+						switch (inst.name) {
+							case "UNM": result = value.unm(context); break
+							case "NOT": result = value.not(context); break
+							case "LEN": result = value.len(context); break
+						}
+
+						setReg(A, result)
+						break
+					}
+
+					case "FORPREP": {
+						const counter = coroutine.regs[A]
+						const limit = coroutine.regs[A + 1]
+						const step = coroutine.regs[A + 2]
+
+						if (counter.type !== "number") {
+							errors.forInit(position)
+						}
+						if (limit.type !== "number") {
+							errors.forLimit(position)
+						}
+						if (step.type !== "number") {
+							errors.forStep(position)
+						}
+
+						setReg(A, coroutine.regs[A].sub(context, coroutine.regs[A + 2]))
+
+						coroutine.pc += sBx
+						break
+					}
+
+					case "FORLOOP": {
+						const counter = coroutine.regs[A]
+						const limit = coroutine.regs[A + 1]
+						const step = coroutine.regs[A + 2]
+
+						const newCounter = counter.add(context, step)
+						setReg(A, newCounter)
+
+						let continueLoop = false
+
+						if (step.le(context, wrap(context, 0)).truthy()) {
+							if (limit.le(context, newCounter).truthy()) {
+								continueLoop = true
+							}
+						}
+						else {
+							if (newCounter.le(context, limit).truthy()) {
+								continueLoop = true
+							}
+						}
+
+						if (continueLoop) {
+							setReg(A + 3, coroutine.regs[A])
+
+							coroutine.pc += sBx
+						}
+						break
+					}
+
+					case "TFORLOOP": {
+						const iter = coroutine.regs[A]
+						const state = coroutine.regs[A + 1]
+						const ctrl = coroutine.regs[A + 2]
+
+						let result = call(context, iter, state, ctrl)
+
+						const values = normalize(context, result)
+
+						const newCtrl = values[0] ?? new LVNil()
+
+						if (newCtrl.type === "nil") {
+							coroutine.pc += Bx - 1
+							break
+						}
+
+						setReg(A + 2, newCtrl)
+
+						for (let i = 0; i < values.length; i ++) {
+							setReg(A + 3 + i, values[i])
+						}
+
+						break
+					}
+
+					case "VARARG": {
+						const varArgCount = coroutine.args.length - proto.paramCount
+
+						if (!proto.isVarArg) {
+							if (B === 0) { top = A }
+							break
+						}
+
+						if (B === 0) {
+							for (let i = 0; i < varArgCount; i ++) {
+								setReg(A + i, coroutine.args[proto.paramCount + i])
+							}
+							coroutine.top = A + varArgCount
+						}
+						else {
+							const nToCopy = B - 1
+
+							const copyCount = Math.min(nToCopy, varArgCount)
+							for (let i = 0; i < copyCount; i ++) {
+								setReg(A + i, coroutine.args[proto.paramCount + i])
+							}
+
+							for (let i = copyCount; i < nToCopy; i ++) {
+								setReg(A + i, new LVNil())
+							}
+						}
+
+						break
+					}
+
+					default: {
+						throw new LuaCFormatError(`invalid opcode ${inst.name}`)
+					}
 				}
 			}
+		}
+		catch (error) {
+			if (error instanceof LuaYield) {
+				coroutine.status = "suspended"
+				return new LVTuple(error.values)
+			}
+			throw error
 		}
 	}
 
 	run() {
-		return this.runClosure(new LVClosure(this.mainProto))
+		return this.runCoroutine(new LVCoroutine(new LVClosure(this.mainProto)))
 	}
 }
 
