@@ -644,6 +644,8 @@ class LVCoroutine extends LVBase {
 
 		this.args = args ?? []
 
+		this.isMain = false
+
 		this.pc = 0
 		this.top = 0
 		this.regs = Array.from({ length: closure.proto.maxStackSize }, () => new LVNil())
@@ -1189,6 +1191,72 @@ class LuaVM {
 			return new LVCoroutine(func, [])
 		}))
 
+		coroutineLib.rawSet(null, "status", new LVFunction((context, coroutine) => {
+			if (!(coroutine instanceof LVCoroutine)) {
+				errors.badArgType(context.position, 1, "resume", co.type, "coroutine")
+			}
+
+			return wrap(context, coroutine.status)
+		}))
+
+		coroutineLib.rawSet(null, "running", new LVFunction((context) => {
+			return new LVTuple([wrap(context, context.coroutine), wrap(context, context.coroutine.isMain)])
+		}))
+
+		coroutineLib.rawSet(null, "close", new LVFunction((context, coroutine) => {
+			if (!(coroutine instanceof LVCoroutine)) {
+				errors.badArgType(context.position, 1, "resume", co.type, "coroutine")
+			}
+
+			coroutine.status = "dead"
+		}))
+
+		coroutineLib.rawSet(null, "isyieldable", new LVFunction((context, func) => {
+			return wrap(context, !context.coroutine.isMain)
+		}))
+
+		coroutineLib.rawSet(null, "wrap", new LVFunction((context, func) => {
+			if (func.type !== "function") {
+				errors.badArgType(context.position, 1, "wrap", func.type, "function")
+			}
+			
+			const coroutine = new LVCoroutine(func, [])
+
+			return new LVFunction((context, ...args) => {
+				if (coroutine.status === "dead") {
+					return new LVTuple([wrap(context, false), wrap(context, "cannot resume dead coroutine")])
+				}
+
+				coroutine.status = "running"
+
+				if (coroutine.pc === 0) {
+					coroutine.args = args
+
+					const proto = coroutine.closure.proto
+					for (let i = 0; i < proto.paramCount; i ++) {
+						coroutine.regs[i] = args[i] ?? new LVNil()
+					}
+
+					coroutine.top = proto.paramCount
+				}
+				else {
+					for (let i = 0; i < args.length; i ++) {
+						coroutine.regs[i] = args[i]
+					}
+					coroutine.top = args.length
+				}
+
+				const result = this.runCoroutine(coroutine)
+
+				if (coroutine.status === "suspended") {
+					return new LVTuple([wrap(context, true), ...result.values])
+				}
+
+				coroutine.status = "dead"
+				return new LVTuple([wrap(context, true), ...normalize(context, result)])
+			})
+		}))
+
 		this.globals.rawSet(null, "coroutine", coroutineLib)
 
 		this.globals.rawSet(null, "print", new LVFunction((context, ...msgs) => {
@@ -1618,6 +1686,7 @@ class LuaVM {
 				}
 				const context = {
 					position,
+					coroutine,
 					vm: this
 				}
 
@@ -2098,7 +2167,11 @@ class LuaVM {
 	}
 
 	run() {
-		return this.runCoroutine(new LVCoroutine(new LVClosure(this.mainProto)))
+		const coroutine = new LVCoroutine(new LVClosure(this.mainProto))
+
+		coroutine.isMain = true
+
+		return this.runCoroutine(coroutine)
 	}
 }
 
