@@ -161,7 +161,7 @@ class LVBase {
 	unm(context) {
 		return this.overrideable(context, () => undefined, "__unm", () => errors.arithmetic(context.position, this.type), other)
 	}
-	not(context) { return new LVBoolean(!this.truthy()) }
+	not(context) { return new LVBoolean(!this.truthy(context)) }
 	len(context) {
 		return this.overrideable(context, () => undefined, "__len", () => errors.length(context.position, this.type))
 	}
@@ -769,7 +769,7 @@ function call(context, value, ...args) {
 	else {
 		if (value instanceof LVBase) {
 			const metaMethod = getMeta(context, value, "__call")
-			if (metaMethod && metaMethod.truthy()) {
+			if (metaMethod && metaMethod.truthy(context)) {
 				return call(context, metaMethod, value, ...args)
 			}
 		}
@@ -941,7 +941,7 @@ class LuaVM {
 			let best = first
 
 			for (const val of rest) {
-				if (val.lt(context, best).truthy()) {
+				if (val.lt(context, best).truthy(context)) {
 					best = val
 				}
 			}
@@ -956,7 +956,7 @@ class LuaVM {
 			let best = first
 
 			for (const val of rest) {
-				if (best.lt(context, val).truthy()) {
+				if (best.lt(context, val).truthy(context)) {
 					best = val
 				}
 			}
@@ -1654,14 +1654,14 @@ class LuaVM {
 		}
 
 		const findOrCreateUpValue = (regIndex) => {
-			for (const upValue of openUpValues) {
+			for (const upValue of coroutine.openUpValues) {
 				if (upValue.isOpen && upValue.index === regIndex) {
 					return upValue
 				}
 			}
 			
 			const upValue = new LVUpValue(coroutine.regs, regIndex)
-			openUpValues.push(upValue)
+			coroutine.openUpValues.push(upValue)
 			
 			return upValue
 		}
@@ -1705,7 +1705,7 @@ class LuaVM {
 						setReg(A, new LVBoolean(B !== 0))
 
 						if (C !== 0) {
-							pc ++
+							coroutine.pc ++
 						}
 						break
 					}
@@ -1800,7 +1800,7 @@ class LuaVM {
 						const newClosure = new LVClosure(newProto)
 
 						for (let i = 0; i < newProto.upValueCount; i ++) {
-							const upValueInst = this.decodeInst(proto.insts[pc ++])
+							const upValueInst = this.decodeInst(proto.insts[coroutine.pc ++])
 
 							switch (upValueInst.name) {
 								case "MOVE":
@@ -1828,7 +1828,7 @@ class LuaVM {
 					case "SETUPVAL": {
 						const upValue = coroutine.closure.upvalues[B]
 						
-						upValue.set(regs[A])
+						upValue.set(coroutine.regs[A])
 						break
 					}
 
@@ -1902,7 +1902,7 @@ class LuaVM {
 							return coroutine.regs[A]
 						}
 
-						const values = regs.slice(A, A + returnCount)
+						const values = coroutine.regs.slice(A, A + returnCount)
 
 						return new LVTuple(values)
 					}
@@ -1997,7 +1997,7 @@ class LuaVM {
 							case "LE": result = left.le(context, right); break
 						}
 
-						if (result.truthy() !== (A !== 0)) {
+						if (result.truthy(context) !== (A !== 0)) {
 							coroutine.pc ++
 						}
 						break
@@ -2075,23 +2075,17 @@ class LuaVM {
 						const newCounter = counter.add(context, step)
 						setReg(A, newCounter)
 
-						let continueLoop = false
-
-						if (step.le(context, wrap(context, 0)).truthy()) {
-							if (limit.le(context, newCounter).truthy()) {
-								continueLoop = true
+						if (step.value > 0) {
+							if (newCounter.value <= limit.value) {
+								setReg(A + 3, coroutine.regs[A])
+								coroutine.pc += sBx
 							}
 						}
 						else {
-							if (newCounter.le(context, limit).truthy()) {
-								continueLoop = true
+							if (newCounter.value >= limit.value) {
+								setReg(A + 3, coroutine.regs[A])
+								coroutine.pc += sBx
 							}
-						}
-
-						if (continueLoop) {
-							setReg(A + 3, coroutine.regs[A])
-
-							coroutine.pc += sBx
 						}
 						break
 					}
@@ -2114,8 +2108,8 @@ class LuaVM {
 
 						setReg(A + 2, newCtrl)
 
-						for (let i = 0; i < values.length; i ++) {
-							setReg(A + 3 + i, values[i])
+						for (let i = 0; i < Bx; i ++) {
+							setReg(A + 3 + i, values[i] ?? new LVNil())
 						}
 
 						break
@@ -2125,7 +2119,7 @@ class LuaVM {
 						const varArgCount = coroutine.args.length - proto.paramCount
 
 						if (!proto.isVarArg) {
-							if (B === 0) { top = A }
+							if (B === 0) { coroutine.top = A }
 							break
 						}
 
